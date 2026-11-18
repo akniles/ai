@@ -40,6 +40,7 @@ export function publicSnapshot(store, gateway, observations = []) {
     "llm.failed": ["setback", "A model call did not complete"],
     "agent.public": ["note", "Agent journal"],
     "publication.changed": ["sharing", "Shared an observation"],
+    "goal.changed": ["goal", "Chose a goal"],
   };
   const events = store
     .events(300)
@@ -51,6 +52,9 @@ export function publicSnapshot(store, gateway, observations = []) {
       category: titles[e.kind][0],
       title: titles[e.kind][1],
       ...(e.kind === "agent.public" ? { note: e.data.summary } : {}),
+      ...(e.kind === "goal.changed"
+        ? { text: e.data.text, status: e.data.status }
+        : {}),
     }));
   const goals = store.db
     .prepare(
@@ -96,11 +100,9 @@ export function publicSnapshot(store, gateway, observations = []) {
           status: e.data.status,
         })),
     })),
-    observations: observations
-      .filter(visibleObservation)
-      .map((o) => ({
-        ...observationView(o),
-        ...(o.type === "GENERATION" ? { model: gateway.model } : {}),
-      })),
+    observations: observations.filter(visibleObservation).map((o) => ({
+      ...observationView(o),
+      ...(o.type === "GENERATION" ? { model: gateway.model } : {}),
+    })),
   };
 }

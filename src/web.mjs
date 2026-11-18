@@ -5,6 +5,10 @@ import { chatSession } from "./web-chat.mjs";
 const files = {
   "/": ["index.html", "text/html; charset=utf-8"],
   "/app.js": ["app.js", "text/javascript; charset=utf-8"],
+  "/ui.js": ["ui.js", "text/javascript; charset=utf-8"],
+  "/activity.js": ["activity.js", "text/javascript; charset=utf-8"],
+  "/memory.js": ["memory.js", "text/javascript; charset=utf-8"],
+  "/chat.js": ["chat.js", "text/javascript; charset=utf-8"],
   "/style.css": ["style.css", "text/css; charset=utf-8"],
   "/chat.css": ["chat.css", "text/css; charset=utf-8"],
 };
