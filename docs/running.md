@@ -15,7 +15,6 @@ Set the `ai` app limit to **50%** in [ChatGPT usage settings](https://chatgpt.co
 
 ```sh
 sh scripts/bootstrap.sh
-sh scripts/compose.sh exec -T control node scripts/publish-prompts.mjs
 sh scripts/ctl.sh status
 sh scripts/ctl.sh resume
 sh scripts/ctl.sh send experiment Alice "Hello"
@@ -24,7 +23,7 @@ sh scripts/ctl.sh panic
 node --test
 ```
 
-First installation starts stopped. `/panic` persists its latch, aborts queued/active model calls and stops the worker container with its managed processes. `/resume` is owner-only. Panic cannot undo previous effects or recall computation already accepted by an external provider. The controller reconciles the saved state after restart.
+First installation starts stopped. `/panic` persists its latch, aborts queued/active model calls and stops the worker container with its managed processes. `/resume` is owner-only. Panic cannot undo previous effects or recall computation already accepted by an external provider. The harness reconciles the saved state after restart.
 
 Control and Langfuse bind to localhost. For private access:
 
@@ -48,18 +47,22 @@ Cloudflare Tunnel is another option: route it to `http://langfuse-web:3000`, set
 
 ## Managed harness prompts
 
-Source texts live in `prompts/`. Publish them to the VPS Langfuse project through its API:
+Langfuse is the only source of production prompts and tool definitions. Edit them there, or send a native Langfuse JSON payload to the API script:
 
 ```sh
-sh scripts/compose.sh exec -T control node scripts/publish-prompts.mjs
+sh scripts/compose.sh exec -T control node scripts/publish-prompts.mjs < update.json
 ```
 
-The script updates changed prompts, reuses unchanged versions, and publishes `ai-harness-release` last. The runtime fetches that release's `production` label and then each member by its pinned version. This covers identity, goal selection, context/subagent templates, invocation and tool descriptions. A change is picked up within 60 seconds, or immediately by the script's owner-only cache refresh. Model observations record the prompt name/version and complete release versions.
+The script posts the payload directly to Langfuse, which handles versions and labels. It has no local prompt registry, conflict checks or extra publishing parameters. `examples/identity.json` illustrates the native payload, including `config.tools`, and is never loaded automatically. Include `labels: ["production"]` to activate a version.
 
-The control service keeps the last successfully loaded bundle in SQLite. If Langfuse is unavailable, it uses that complete cached release. With no cached release it waits and retries; it does not substitute hidden hardcoded prompts. Publishing a partial update does not switch the active release. Never place credentials or private runtime facts in prompt source files.
+Each work period reads four prompts from native `production` labels: `ai-identity`, `ai-goal-selection`, `ai-subagent-task` (with `{{task}}`) and `ai-invocation`. Identity's `config.tools` is the OpenAI function-tool array: names, descriptions and JSON argument schemas. Code implements the tools; Langfuse config chooses which ones to expose. Context is passed directly as JSON. No manifest, prompt cache, local tool-description registry or fallback text is used. If Langfuse is unavailable, the call fails visibly and the worker retries later. Observations record the versions actually used.
 
-HTTP owner API: `GET /status`, `/events`, `/outbox`; `POST /inbox`, `/panic`, `/resume`, with the owner bearer token. Inbox takes `{ "id": "optional-idempotency-key", "chat": "chat-id", "sender": "name", "body": "text" }`. Exact owner `/panic` and `/resume` messages bypass optional attention and blocked chats. There is no public inbox.
+HTTP owner API: `GET /status`, `/events`, `/outbox`; `POST /inbox`, `/panic`, `/resume`, with the owner bearer token. Inbox takes `{ "id": "optional-idempotency-key", "chat": "chat-id", "sender": "name", "body": "text" }`. Exact owner `/panic` and `/resume` messages bypass optional attention and blocked chats. The owner inbox is not exposed publicly.
 
-The controller holds the Docker socket and provider credentials; keep it private. The worker has a scoped runtime token, a writable workspace and no host credential mounts. Back up persistent volumes separately. The experiment uses 4 vCPU / 8 GB RAM. The Langfuse stack is vendored from its [official repository](https://github.com/langfuse/langfuse); see [notices](../THIRD_PARTY.md).
+The website now provides anonymous chat through `GET/POST /api/chat`. A signed Secure/HttpOnly cookie selects the visitor's conversation; the browser cannot supply another chat ID. The web service holds a separate `WEB_CHAT_TOKEN`, which can only deliver visitor messages and read those conversations, with no owner/runtime permissions. On an existing installation, generate this new secret in the server `.env` before updating Compose. Visitor `/panic` and `/resume` are ordinary text. Replies appear only after the agent chooses `inbox_reply`; there is no automatic assistant response. Messages may appear in public tool logs. Each message is limited to 2,000 characters; persistent limits are 6/minute and 60/day per chat, plus 12/minute and 120/hour across the site. Reloading the service does not reset these limits.
+
+Notifications can wake an idle worker, with at least 15 seconds between work periods. They do not interrupt an active model call or bypass provider-error backoff. Muted/blocked chats do not wake the agent. The public state shows a pause and the scheduled next observation; a goal created after completing the preceding goal starts within 15 seconds instead of inheriting its old pause. Each goal column initially shows its latest goal and can expand to its latest ten.
+
+The harness holds the Docker socket and provider credentials; keep it private. The worker has a scoped runtime token, a writable workspace and no host credential mounts. Back up persistent volumes separately. The experiment uses 4 vCPU / 8 GB RAM. The Langfuse stack is vendored from its [official repository](https://github.com/langfuse/langfuse); see [notices](../THIRD_PARTY.md).
 
 Voice, general MCP support and full Codex/Claude capability parity are pending. Memory quality and scaling over time still require measurement. Initial drives are seeded in the identity prompt; the model chooses its activity.

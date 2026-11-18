@@ -1,1 +1,0 @@
-Observe the supplied runtime state and choose your next activity.

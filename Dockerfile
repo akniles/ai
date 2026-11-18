@@ -4,7 +4,6 @@ WORKDIR /app
 COPY package.json ./
 COPY src ./src
 COPY web ./web
-COPY prompts ./prompts
 COPY scripts ./scripts
 RUN mkdir /workspace && chown node:node /workspace
 CMD ["node", "src/control.mjs"]

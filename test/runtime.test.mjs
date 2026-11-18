@@ -12,9 +12,7 @@ import { runSession,ensureActiveGoal } from '../src/worker.mjs';
 import { Tools } from '../src/tools.mjs';
 import { responsesRequest,ChatGPTGateway } from '../src/chatgpt.mjs';
 import { publicObservation } from '../src/public.mjs';
-import {Prompts,promptNames,compilePrompt} from '../src/prompts.mjs';
-
-const testPrompts={releaseVersion:1,prompts:Object.fromEntries(await Promise.all(promptNames.map(async name=>[name,{version:1,prompt:(await readFile(new URL(`../prompts/${name}.txt`,import.meta.url),'utf8')).trim()}])))};
+import {testPrompts} from '../fixtures/prompts.mjs';
 
 function setup(store=new Store(':memory:')) {
   const supervisor={stops:0,starts:0,async stop(){this.stops++;},async start(){this.starts++;}};
