@@ -1,0 +1,107 @@
+# Official Langfuse stack is vendored in deploy/langfuse.upstream.yml.
+# Use: docker compose -f deploy/langfuse.upstream.yml -f compose.yml ...
+services:
+  control:
+    build: .
+    image: ai-runtime:local
+    restart: unless-stopped
+    environment:
+      BIND_ADDRESS: 0.0.0.0
+      STATE_DB: /state/runtime.sqlite
+      OWNER_TOKEN: ${OWNER_TOKEN:?}
+      RUNTIME_TOKEN: ${RUNTIME_TOKEN:?}
+      MEMORY_TOKEN: ${MEMORY_TOKEN:?}
+      MODEL_API_KEY: ${MODEL_API_KEY:?}
+      MODEL_BASE_URL: ${MODEL_BASE_URL:-https://openrouter.ai/api/v1}
+      MODEL: ${MODEL:-qwen/qwen3-coder-30b-a3b-instruct}
+      INPUT_TOKEN_PRICE: ${INPUT_TOKEN_PRICE:-0.00000015}
+      OUTPUT_TOKEN_PRICE: ${OUTPUT_TOKEN_PRICE:-0.0000006}
+      MODEL_BUDGET_USD: ${MODEL_BUDGET_USD:-10}
+      HINDSIGHT_URL: http://hindsight:8888
+      LANGFUSE_URL: http://langfuse-web:3000
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:?}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:?}
+      TIMEZONE: Europe/Moscow
+    ports: ["127.0.0.1:8787:8787"]
+    volumes: ["control_data:/state", "/var/run/docker.sock:/var/run/docker.sock"]
+    networks: [default, execution]
+    mem_limit: 384m
+    logging: &logging
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+  worker:
+    image: ai-runtime:local
+    container_name: ai-worker
+    command: ["node", "src/worker.mjs"]
+    user: node
+    restart: "no"
+    profiles: [agent]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 768m
+    cpus: 1.5
+    environment:
+      CONTROL_URL: http://control:8787
+      RUNTIME_TOKEN: ${RUNTIME_TOKEN:?}
+      WORKSPACE: /workspace
+      CYCLE_INTERVAL_MS: 60000
+    volumes: ["workspace:/workspace"]
+    tmpfs: ["/tmp:size=128m,mode=1777"]
+    networks: [execution]
+    logging: *logging
+  hindsight:
+    image: ghcr.io/vectorize-io/hindsight:1.2.1
+    restart: unless-stopped
+    stop_grace_period: 75s
+    shm_size: 512mb
+    mem_limit: 2560m
+    environment:
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: http://control:8787/v1
+      HINDSIGHT_API_LLM_API_KEY: ${MEMORY_TOKEN:?}
+      HINDSIGHT_API_LLM_MODEL: qwen/qwen3-coder-30b-a3b-instruct
+      HINDSIGHT_API_WORKER_ID: ai-memory
+    volumes: ["hindsight_data:/home/hindsight/.pg0"]
+    ports: ["127.0.0.1:9999:9999"]
+    logging: *logging
+  langfuse-web:
+    ports: !override ["127.0.0.1:3000:3000"]
+    mem_limit: 1536m
+    environment:
+      LANGFUSE_INIT_ORG_ID: ai
+      LANGFUSE_INIT_ORG_NAME: ai
+      LANGFUSE_INIT_PROJECT_ID: ai
+      LANGFUSE_INIT_PROJECT_NAME: ai
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:?}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:?}
+      LANGFUSE_INIT_USER_EMAIL: owner@ai.local
+      LANGFUSE_INIT_USER_NAME: Owner
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_OWNER_PASSWORD:?}
+      AUTH_DISABLE_SIGNUP: "true"
+    logging: *logging
+  langfuse-worker:
+    mem_limit: 1024m
+    logging: *logging
+  langfuse-ai-gateway:
+    profiles: [unused]
+  minio:
+    ports: !override ["127.0.0.1:9090:9000", "127.0.0.1:9091:9001"]
+    mem_limit: 384m
+    logging: *logging
+  clickhouse:
+    mem_limit: 1536m
+    logging: *logging
+  postgres:
+    mem_limit: 512m
+    logging: *logging
+  redis:
+    mem_limit: 128m
+    logging: *logging
+networks:
+  execution: {}
+volumes:
+  control_data: {}
+  workspace: {}
+  hindsight_data: {}

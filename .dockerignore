@@ -1,0 +1,5 @@
+.git
+.local
+.state
+.env*
+node_modules
