@@ -8,12 +8,14 @@ const schemas = {
   inbox_read: ['Choose to read a message.', {id:'string'}],
   inbox_reply: ['Explicitly publish a reply in a chat.', {chat:'string',body:'string'}],
   chat_set: ['Mute/unmute or block/unblock a chat.', {chat:'string',blocked:'boolean',muted:'boolean'}],
-  memory_decide: ['For any observed fact decide whether to remember it. Assess novelty, future usefulness, source reliability and duplication. Preserve uncertainty. Explain the decision; only save=true writes memory. Use kind=rule for learned generalizations. Core memory is limited to twelve short entries.', {fact:'string',save:'boolean',reason:'string',source:'string',kind:'string',core:'boolean'}],
+  memory_decide: ['Decide whether a fact is worth remembering: novelty, usefulness, reliability, duplication. Explain the decision. Only save=true writes it. kind=rule for learned generalizations; core is limited to twelve entries. public=true deliberately shares this fact on the website; default private.', {fact:'string',save:'boolean',reason:'string',source:'string',kind:'string',core:'boolean',public:'boolean'}],
   memory_search: ['Search durable memory by meaning, keywords and temporal language.', {query:'string'}],
   memory_core_set: ['Promote/demote an existing memory in the automatically loaded core.', {id:'string',core:'boolean'}],
-  goal_set: ['Create or revise your own goal. status: active, done, abandoned. Use id to update.', {text:'string',status:'string',id:'string'}],
-  state_set: ['Persist concise working state, plans, expectations and deadlines for the next cycle.', {state:'object'}],
+  goal_set: ['Create or revise your own public goal. status: active, done, abandoned. Use id to update. Goals and tool inputs/outputs are public in this experiment; never put secrets in them.', {text:'string',status:'string',id:'string'}],
+  state_set: ['Persist concise working state, plans, expectations and deadlines. Choose the next observation time with state.next_wake_seconds (15 to 3600 seconds) or state.next_wake (ISO timestamp).', {state:'object'}],
   journal: ['Record a short decision or observation and its reason. This does not send a chat message.', {summary:'string',reason:'string'}],
+  public_note: ['Deliberately publish a short note on your public website: what you tried, observed, learned, or found difficult. Never publish private messages, secrets or personal information. This is public; journal is private.', {summary:'string'}],
+  publication_set: ['Publish/unpublish a memory or an operation summary on the website. kind: memory, operation. For operations provide a summary and optional selected output excerpt. Goals and tool logs are always public. Never include secrets.', {kind:'string',id:'string',public:'boolean',summary:'string',output:'string'}],
   shell_start: ['Start any local command asynchronously in your workspace. Returns an operation id; use job_poll to observe. timeout_seconds defaults to 120, maximum 3600.', {command:'string',timeout_seconds:'number'}],
   job_poll: ['Read progress/result of a shell command or subagent.', {id:'string'}],
   job_cancel: ['Cancel a managed operation.', {id:'string'}],
@@ -22,8 +24,8 @@ const schemas = {
   skill_write: ['Learn or update a reusable skill. Include when to use it, steps and evidence.', {name:'string',content:'string'}],
   subagent_start: ['Delegate a bounded investigation to another model session. It can use tools but cannot recursively spawn subagents. Runs concurrently; poll its result.', {task:'string'}]
 };
-const optional = new Set(['blocked','muted','source','kind','core','status','id','reason','timeout_seconds']);
-export const definitions=Object.entries(schemas).map(([name,[description,properties]])=>({type:'function',function:{name,description,parameters:{type:'object',properties:Object.fromEntries(Object.entries(properties).map(([k,type])=>[k,{type}])),required:Object.keys(properties).filter(k=>!optional.has(k) || (k==='id' && ['inbox_read','job_poll','job_cancel','memory_core_set'].includes(name))),additionalProperties:false}}}));
+const optional = new Set(['blocked','muted','source','kind','core','status','id','reason','timeout_seconds','public','summary','output']);
+export const definitions=Object.entries(schemas).map(([name,[description,properties]])=>({type:'function',function:{name,description,parameters:{type:'object',properties:Object.fromEntries(Object.entries(properties).map(([k,type])=>[k,{type}])),required:Object.keys(properties).filter(k=>!optional.has(k) || (k==='id' && ['inbox_read','job_poll','job_cancel','memory_core_set','publication_set'].includes(name)) || (name==='publication_set'&&['kind','public'].includes(k)) || (['public_note','journal'].includes(name)&&k==='summary')),additionalProperties:false}}}));
 
 function stopTree(child) {
   if (process.platform==='win32') spawn('taskkill',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});

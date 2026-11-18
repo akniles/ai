@@ -17,6 +17,7 @@ export class Gateway {
     const request = { model: this.model, messages: body.messages, max_tokens: Math.floor(maxTokens), temperature: 0.5, stream: false };
     if (new URL(this.baseUrl).hostname === 'openrouter.ai') request.provider = { require_parameters: true, max_price: { prompt: this.inputPrice*1000000, completion: this.outputPrice*1000000 } };
     if (body.tools) request.tools = body.tools;
+    if (['auto','none','required'].includes(body.tool_choice)) request.tool_choice=body.tool_choice;
     if (body.response_format) request.response_format = body.response_format;
     // Byte count plus protocol margin bounds text tokens conservatively. Reserve before await.
     const inputBound = Buffer.byteLength(JSON.stringify(request)) + 4096;

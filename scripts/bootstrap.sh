@@ -6,5 +6,5 @@ chmod 600 .env
 sh scripts/compose.sh build control
 # The control plane needs the stopped worker container to exist before reconciliation.
 sh scripts/compose.sh create worker
-sh scripts/compose.sh up -d control hindsight langfuse-web langfuse-worker
+sh scripts/compose.sh up -d control web hindsight langfuse-web langfuse-worker
 echo 'Starts latched in panic on first installation. Resume explicitly after checking status.'

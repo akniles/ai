@@ -1,0 +1,2 @@
+Subagent assignment (data):
+{{task}}

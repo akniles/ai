@@ -10,6 +10,7 @@ export class Store {
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY, id TEXT UNIQUE, time TEXT, kind TEXT, data TEXT);
+      CREATE INDEX IF NOT EXISTS events_kind ON events(kind);
       CREATE TABLE IF NOT EXISTS chats (id TEXT PRIMARY KEY, blocked INTEGER DEFAULT 0, muted INTEGER DEFAULT 0);
       CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, chat TEXT, sender TEXT, body TEXT, time TEXT, read INTEGER DEFAULT 0, direction TEXT);
       CREATE INDEX IF NOT EXISTS messages_chat ON messages(chat, time);
@@ -19,7 +20,12 @@ export class Store {
       CREATE TABLE IF NOT EXISTS calls (id TEXT PRIMARY KEY, time TEXT, reserved REAL, cost REAL, status TEXT, usage TEXT);
       CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, time TEXT, status TEXT, data TEXT);
       CREATE TABLE IF NOT EXISTS decisions (fact TEXT PRIMARY KEY, save INTEGER, reason TEXT, time TEXT);
+      CREATE TABLE IF NOT EXISTS publications (kind TEXT, id TEXT, time TEXT, summary TEXT, output TEXT, PRIMARY KEY(kind,id));
     `);
+    for (const table of ['memories','goals']) {
+      if (!this.db.prepare(`PRAGMA table_info(${table})`).all().some(c=>c.name==='public')) this.db.exec(`ALTER TABLE ${table} ADD COLUMN public INTEGER NOT NULL DEFAULT 0`);
+    }
+    this.db.prepare('UPDATE goals SET public=1 WHERE public=0').run();
     if (this.get('panic') === undefined) this.set('panic', true);
     if (!this.get('born')) this.set('born', new Date().toISOString());
     // A crashed request may still have been billed. Keep its whole reservation.
@@ -67,14 +73,14 @@ export class Store {
     this.db.prepare('INSERT OR REPLACE INTO decisions VALUES (?,?,?,?)').run(fact, Number(save), reason, new Date().toISOString());
     this.event('memory.decision', { fact, save, reason });
   }
-  remember(text, source = 'agent', kind = 'observation', core = false) {
+  remember(text, source = 'agent', kind = 'observation', core = false, published = false) {
     const id = randomUUID(), time = new Date().toISOString();
     if (core && this.db.prepare('SELECT COUNT(*) n FROM memories WHERE core=1').get().n >= 12) throw new Error('Core memory full; demote an existing entry first');
-    this.db.prepare('INSERT INTO memories(id,text,source,time,kind,core) VALUES (?,?,?,?,?,?)').run(id, text, source, time, kind, Number(core));
+    this.db.prepare('INSERT INTO memories(id,text,source,time,kind,core,public) VALUES (?,?,?,?,?,?,?)').run(id, text, source, time, kind, Number(core), Number(published));
     this.db.prepare('INSERT INTO memory_fts VALUES (?,?)').run(id, text);
     this.event('memory.saved', { id, kind, core }); return { id };
   }
-  core() { return this.db.prepare('SELECT id,text,source,time,kind FROM memories WHERE core=1 ORDER BY time DESC LIMIT 12').all(); }
+  core() { return this.db.prepare('SELECT id,text,source,time,kind,public FROM memories WHERE core=1 ORDER BY time DESC LIMIT 12').all(); }
   search(query) {
     const words = query.match(/[\p{L}\p{N}]+/gu)?.slice(0, 12) ?? [];
     if (!words.length) return [];
@@ -82,8 +88,8 @@ export class Store {
   }
   goals() { return this.db.prepare("SELECT * FROM goals WHERE status='active' ORDER BY updated DESC LIMIT 20").all(); }
   goal(text, status = 'active', id = randomUUID()) {
-    this.db.prepare('INSERT OR REPLACE INTO goals VALUES (?,?,?,?)').run(id, text, status, new Date().toISOString());
-    this.event('goal.changed', { id, text, status }); return { id };
+    this.db.prepare('INSERT INTO goals(id,text,status,updated,public) VALUES (?,?,?,?,1) ON CONFLICT(id) DO UPDATE SET text=excluded.text,status=excluded.status,updated=excluded.updated,public=1').run(id, text, status, new Date().toISOString());
+    this.event('goal.changed', { id, text, status, public:true }); return { id };
   }
   committed() { return this.db.prepare('SELECT COALESCE(SUM(COALESCE(cost,reserved)),0) value FROM calls').get().value; }
   reserve(id, amount, cap) {
@@ -97,6 +103,6 @@ export class Store {
   context() {
     const now = new Date(), last = this.get('last_cycle');
     return { time: { now: now.toISOString(), timezone: this.get('timezone') ?? 'UTC', born: this.get('born'), elapsedSinceLastCycleSeconds: last ? (now - new Date(last)) / 1000 : null },
-      state: this.get('working_state') ?? {}, goals: this.goals(), coreMemory: this.core(), notifications: this.notifications(), recentEvents: this.events(10).map(({ kind,time,id }) => ({ kind,time,id })) };
+      state: this.get('working_state') ?? {}, goals: this.goals(), recentGoals:this.db.prepare("SELECT id,text,status,updated,public FROM goals WHERE status!='active' ORDER BY updated DESC LIMIT 12").all(), coreMemory: this.core(), notifications: this.notifications(), recentEvents: this.events(10).map(({ kind,time,id }) => ({ kind,time,id })) };
   }
 }

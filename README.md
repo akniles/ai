@@ -2,6 +2,8 @@
 
 **From a personal assistant to the mind of R2-D2.**
 
+[Watch the experiment](https://167.172.184.22/)
+
 ai is an open-source foundation for AI that perceives its world, remembers its experience, develops its own goals, and acts. A system with a life beyond the next prompt.
 
 The ambition is to become a cornerstone of future assistant architectures: replace a personal agent like Hermes, power an always-present companion, or put a capable model into a robot and let it engage with the world.
