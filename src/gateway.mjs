@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 export class Gateway {
-  constructor({ store, telemetry, baseUrl, key, model, inputPrice, outputPrice, requestPrice = 0, cap = 10, fetchImpl = fetch }) {
-    Object.assign(this, { store, telemetry, baseUrl, key, model, inputPrice, outputPrice, requestPrice, cap, fetchImpl }); this.active = new Set();
+  constructor({ store, telemetry, baseUrl, key, model, inputPrice, outputPrice, requestPrice = 0, cap = 10, fetchImpl = fetch, enabled = true }) {
+    Object.assign(this, { store, telemetry, baseUrl, key, model, inputPrice, outputPrice, requestPrice, cap, fetchImpl, enabled }); this.active = new Set();
   }
   abort() { for (const c of this.active) c.abort(new Error('Owner panic')); }
   async complete(body) {
+    if (!this.enabled) throw new Error('Inference backend disabled');
     if (this.store.get('panic')) throw new Error('Runtime stopped');
     if (!this.key || !this.baseUrl || !this.model) throw new Error('Model not configured');
     if (![this.inputPrice,this.outputPrice,this.requestPrice].every(x => Number.isFinite(x) && x >= 0)) throw new Error('Verified pricing required');
@@ -37,12 +38,12 @@ export class Gateway {
         this.store.event('budget.price_violation', { id, reserved, actual });
       }
       this.store.event('llm.completed', { id, model: this.model, usage: result.usage, reserved });
-      this.telemetry?.record('llm', request, result, start, { callId: id, model: this.model, usage: result.usage });
+      this.telemetry?.record('llm', request, result, start, { ...body._context, callId: id, model: this.model, usage: result.usage });
       return result;
     } catch (e) {
       this.store.settle(id, null, { error: e.message });
       this.store.event('llm.failed', { id, message: e.message });
-      this.telemetry?.record('llm.error', request, { error: e.message }, start, { callId: id }); throw e;
+      this.telemetry?.record('llm.error', request, { error: e.message }, start, { ...body._context, callId: id }); throw e;
     } finally { this.active.delete(c); }
   }
 }

@@ -87,7 +87,7 @@ export class Store {
   }
   committed() { return this.db.prepare('SELECT COALESCE(SUM(COALESCE(cost,reserved)),0) value FROM calls').get().value; }
   reserve(id, amount, cap) {
-    if (!Number.isFinite(amount) || amount < 0 || this.committed() + amount > cap) throw new Error('Budget exhausted or unknown');
+    if (!Number.isFinite(cap) || cap < 0 || !Number.isFinite(amount) || amount < 0 || this.committed() + amount > cap) throw new Error('Budget exhausted or unknown');
     this.db.prepare("INSERT INTO calls VALUES (?,?,?,NULL,'inflight',NULL)").run(id, new Date().toISOString(), amount);
   }
   settle(id, cost, usage) {

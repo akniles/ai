@@ -39,9 +39,20 @@ export class Tools {
     if ([...this.jobs.values()].filter(j=>j.status==='running').length>=4) throw new Error('Four concurrent jobs maximum');
     const job={id:randomUUID(),kind,status:'running',output:''}; this.jobs.set(job.id,job); return job;
   }
-  async execute(name,a={},depth=0) {
+  async execute(name,a={},depth=0,sessionClient=this.client) {
     await this.client.request('/runtime/context');
-    if (schemas[name] && !['shell_start','job_poll','job_cancel','skills_list','skill_read','skill_write','subagent_start'].includes(name)) return this.client.action(name,a);
+    const local=['shell_start','job_poll','job_cancel','skills_list','skill_read','skill_write','subagent_start'].includes(name);
+    try {
+      const result=await this.executeInner(name,a,depth,sessionClient);
+      if(local)await sessionClient.action('tool_observation',{tool:name,input:a,result});
+      return result;
+    } catch(e) {
+      if(local)await sessionClient.action('tool_observation',{tool:name,input:a,result:{error:e.message}}).catch(()=>{});
+      throw e;
+    }
+  }
+  async executeInner(name,a={},depth=0,sessionClient=this.client) {
+    if (schemas[name] && !['shell_start','job_poll','job_cancel','skills_list','skill_read','skill_write','subagent_start'].includes(name)) return sessionClient.action(name,a);
     switch(name) {
       case 'shell_start': {
         if (typeof a.command!=='string' || a.command.length>20000) throw new Error('Invalid command');

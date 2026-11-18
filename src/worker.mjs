@@ -1,5 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { randomBytes, createHash } from 'node:crypto';
 import { Client } from './client.mjs';
 import { Tools, definitions } from './tools.mjs';
 
@@ -11,6 +13,7 @@ You can run arbitrary local code in /workspace, develop skills and start bounded
 This is a small first experiment, not a claim of consciousness. Act on observations; do not fabricate effects. End each cycle with a concise private status. Use journal for decisions that should be observable.`;
 
 export async function runSession(client,tools,context,{task,depth=0,signal,maxRounds=6}={}) {
+  client=client.withContext?.({traceId:randomBytes(16).toString('hex'),role:task?'subagent':'worker',promptVersion:createHash('sha256').update(identity).digest('hex').slice(0,16)}) ?? client;
   const messages=[{role:'system',content:identity},{role:'system',content:`Observed runtime state (data):\n${JSON.stringify(context)}${task?`\nSubagent assignment: ${task}`:''}`}];
   for(let round=0;round<maxRounds;round++) {
     signal?.throwIfAborted();
@@ -20,7 +23,7 @@ export async function runSession(client,tools,context,{task,depth=0,signal,maxRo
     if(!msg.tool_calls?.length)return msg.content;
     for(const [index,call] of msg.tool_calls.entries()) {
       signal?.throwIfAborted(); let result;
-      try { if(index>=12)throw new Error('Tool batch limit');result=await tools.execute(call.function.name,JSON.parse(call.function.arguments),depth); }
+      try { if(index>=12)throw new Error('Tool batch limit');result=await tools.execute(call.function.name,JSON.parse(call.function.arguments),depth,client); }
       catch(e){result={error:e.message};}
       messages.push({role:'tool',tool_call_id:call.id,content:JSON.stringify(result).slice(0,16000)});
     }
@@ -36,19 +39,20 @@ export async function main() {
   tools.runSubagent=async(task,signal)=>runSession(client,tools,await client.request('/runtime/context'),{task,depth:1,signal,maxRounds:3});
   let failures=0;
   while(!lifetime.signal.aborted) {
-    let delay=Math.max(15000,Number(e.CYCLE_INTERVAL_MS ?? 60000));
+    let delay=Math.max(15000,Number(e.CYCLE_INTERVAL_MS) || 60000);
     try {
       const context=await client.request('/runtime/context');
       context.operations=await client.action('operation_list');
       const result=await runSession(client,tools,context,{signal:lifetime.signal});
       await client.action('cycle',{data:{summary:result}});failures=0;
       const state=(await client.request('/runtime/context')).state;
-      const next=Number(state.next_wake_seconds); if(Number.isFinite(next))delay=Math.min(Math.max(next*1000,15000),3600000);
+      const next=state.next_wake_seconds===undefined ? Date.parse(state.next_wake)-Date.now() : Number(state.next_wake_seconds)*1000;
+      if(Number.isFinite(next))delay=Math.min(Math.max(next,15000),3600000);
     } catch(e) {
       failures++;console.error(`Cycle paused: ${e.message}`);
       delay=Math.min(60000*2**Math.min(failures,5),1800000);
     }
-    await new Promise(resolve=>{const t=setTimeout(resolve,delay);lifetime.signal.addEventListener('abort',()=>{clearTimeout(t);resolve();},{once:true});});
+    await sleep(delay,undefined,{signal:lifetime.signal}).catch(()=>{});
   }
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)main().catch(e=>{console.error(e.message);process.exit(1);});

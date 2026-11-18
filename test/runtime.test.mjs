@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.mjs';
@@ -9,6 +9,7 @@ import { Gateway } from '../src/gateway.mjs';
 import { createControl } from '../src/control.mjs';
 import { Client } from '../src/client.mjs';
 import { runSession } from '../src/worker.mjs';
+import { Tools } from '../src/tools.mjs';
 
 function setup(store=new Store(':memory:')) {
   const supervisor={stops:0,starts:0,async stop(){this.stops++;},async start(){this.starts++;}};
@@ -75,4 +76,21 @@ test('memory decisions, indexed search, bounded core and goals survive restart',
   const dir=await mkdtemp(join(tmpdir(),'ai-')),path=join(dir,'state.sqlite');let s=new Store(path);
   s.decide('Observed red lighthouse',true,'Useful landmark');s.remember('Observed red lighthouse','sensor','observation',true);s.goal('Explore shoreline');
   s.close();s=new Store(path);assert.equal(s.search('lighthouse')[0].source,'sensor');assert.equal(s.core().length,1);assert.equal(s.goals().length,1);s.close();await rm(dir,{recursive:true,force:true});
+});
+test('missing or invalid cash cap fails closed before provider dispatch',async()=>{
+  const c=setup();c.store.set('panic',false);c.gateway.cap=NaN;let dispatched=false;
+  c.gateway.fetchImpl=()=>{dispatched=true;throw new Error('Must not dispatch');};
+  await assert.rejects(c.gateway.complete({messages:[],max_tokens:10}),/Budget/);assert.equal(dispatched,false);c.store.close();
+});
+test('shell tool executes asynchronously, exposes actual result and durable operation',async t=>{
+  const c=setup(),{runtime}=await serve(t,c);await c.resume();
+  const dir=await mkdtemp(join(tmpdir(),'ai-shell-'));const tools=new Tools(runtime,dir);
+  t.after(async()=>{tools.stop();await rm(dir,{recursive:true,force:true});});
+  const j=await tools.execute('shell_start',{command:"node -e \"require('node:fs').writeFileSync('result.txt','done');console.log('complete')\""});
+  let result;
+  for(let i=0;i<100;i++){result=await tools.execute('job_poll',{id:j.id});if(result.status!=='running')break;await new Promise(r=>setTimeout(r,30));}
+  assert.equal(result.status,'done');assert.equal(result.exitCode,0);assert.match(result.output,/complete/);
+  assert.equal(await readFile(join(dir,'result.txt'),'utf8'),'done');
+  assert.ok(c.store.events().some(e=>e.kind==='tool.executed'&&e.data.tool==='shell_start'));
+  const operations=await runtime.action('operation_list');assert.equal(operations[0].status,'done');
 });

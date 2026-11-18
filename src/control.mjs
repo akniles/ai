@@ -7,7 +7,7 @@ import { DockerSupervisor } from './supervisor.mjs';
 import { Telemetry } from './telemetry.mjs';
 import { Memory } from './memory.mjs';
 
-const equal = (a,b) => typeof a === 'string' && typeof b === 'string' && a.length === b.length && timingSafeEqual(Buffer.from(a),Buffer.from(b));
+const equal = (a,b) => typeof a === 'string' && typeof b === 'string' && Buffer.byteLength(a) === Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a),Buffer.from(b));
 const text = (v,max=4000) => { if (typeof v !== 'string' || !v.trim() || v.length > max) throw new Error('Invalid text'); return v; };
 async function json(req) {
   let s = ''; for await (const b of req) { s += b; if (Buffer.byteLength(s) > 200000) throw new Error('Request too large'); }
@@ -25,6 +25,7 @@ export function createControl({ store, ownerToken, runtimeToken, memoryToken, su
     return serialize(async () => { await supervisor.stop(); return { stopped: true }; });
   }
   async function resume() {
+    if (gateway.enabled === false) throw new Error('Inference backend disabled; configure the selected provider first');
     const ticket = ++generation;
     return serialize(async () => {
       store.set('panic', true); await supervisor.stop();
@@ -63,10 +64,13 @@ export function createControl({ store, ownerToken, runtimeToken, memoryToken, su
         result={ok:true}; break;
       }
       case 'operation_list': result=store.db.prepare('SELECT * FROM operations ORDER BY time DESC LIMIT 20').all().map(r=>({...r,data:JSON.parse(r.data)}));break;
+      case 'tool_observation': store.event('tool.executed',{tool:a.tool,input:a.input,result:a.result});result={ok:true};break;
       case 'cycle': store.set('last_cycle',new Date().toISOString()); store.event('agent.cycle',a.data ?? {}); result={ok:true}; break;
       default: throw new Error('Unknown action');
     }
-    telemetry?.record(`tool.${a.name}`, a, result, start); return result;
+    if(a.name==='tool_observation')telemetry?.record(`tool.${a.tool}`,a.input,a.result,start,a._context);
+    else telemetry?.record(`tool.${a.name}`, a, result, start, a._context);
+    return result;
   }
   const server = http.createServer(async (req,res) => {
     const send = (status,data) => { res.writeHead(status, { 'content-type':'application/json', 'cache-control':'no-store' }); res.end(JSON.stringify(data)); };
@@ -78,7 +82,7 @@ export function createControl({ store, ownerToken, runtimeToken, memoryToken, su
       if (!owner && !runtime && !mem) return send(401,{error:'Unauthorized'});
       if (owner && req.method==='POST' && path==='/panic') return send(200,await panic());
       if (owner && req.method==='POST' && path==='/resume') return send(200,await resume());
-      if (owner && req.method==='GET' && path==='/status') return send(200,{panic:store.get('panic'),committedUsd:store.committed(),budgetUsd:gateway.cap,activeCalls:gateway.active.size,...store.context()});
+      if (owner && req.method==='GET' && path==='/status') return send(200,{panic:store.get('panic'),inferenceEnabled:gateway.enabled,model:gateway.model,committedUsd:store.committed(),budgetUsd:gateway.cap,activeCalls:gateway.active.size,...store.context()});
       if (owner && req.method==='GET' && path==='/events') return send(200,store.events());
       if (owner && req.method==='GET' && path==='/outbox') return send(200,store.db.prepare("SELECT * FROM messages WHERE direction='out' ORDER BY time DESC LIMIT 100").all());
       if (owner && req.method==='POST' && path==='/inbox') {
@@ -118,7 +122,7 @@ export async function main() {
   const e=process.env, store=new Store(e.STATE_DB ?? '.state/runtime.sqlite');
   store.set('timezone', e.TIMEZONE ?? 'Europe/Moscow');
   const telemetry=new Telemetry({store,url:e.LANGFUSE_URL,publicKey:e.LANGFUSE_PUBLIC_KEY,secretKey:e.LANGFUSE_SECRET_KEY});
-  const gateway=new Gateway({store,telemetry,baseUrl:e.MODEL_BASE_URL,key:e.MODEL_API_KEY,model:e.MODEL,inputPrice:Number(e.INPUT_TOKEN_PRICE),outputPrice:Number(e.OUTPUT_TOKEN_PRICE),requestPrice:Number(e.REQUEST_PRICE ?? 0),cap:Number(e.MODEL_BUDGET_USD ?? 10)});
+  const gateway=new Gateway({store,telemetry,enabled:e.MODEL_ENABLED!=='false',baseUrl:e.MODEL_BASE_URL,key:e.MODEL_API_KEY,model:e.MODEL,inputPrice:Number(e.INPUT_TOKEN_PRICE),outputPrice:Number(e.OUTPUT_TOKEN_PRICE),requestPrice:Number(e.REQUEST_PRICE ?? 0),cap:Number(e.MODEL_BUDGET_USD ?? 10)});
   const memory=new Memory(store,e.HINDSIGHT_URL,telemetry);
   const supervisor=new DockerSupervisor(e.WORKER_CONTAINER ?? 'ai-worker');
   const control=createControl({store,telemetry,gateway,memory,supervisor,ownerToken:e.OWNER_TOKEN,runtimeToken:e.RUNTIME_TOKEN,memoryToken:e.MEMORY_TOKEN});
