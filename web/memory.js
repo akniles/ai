@@ -12,6 +12,7 @@ export function renderMemory(data, memoryQuery = "") {
     "Map of shared memories. Numbers match the memories below.";
   map.replaceChildren(mapTitle);
   const focused = document.activeElement?.dataset.memory;
+  const focusedTag = document.activeElement?.tagName;
   list.replaceChildren();
   if (!items.some((m) => m.id === selectedMemory))
     selectedMemory = items[0]?.id ?? null;
@@ -60,8 +61,11 @@ export function renderMemory(data, memoryQuery = "") {
       }
     }
   for (const m of nodes) {
-    const group = svg("g", {
+    const group = svg("a", {
         class: `memory-node ${m.core ? "is-core" : ""} ${m.id === selectedMemory ? "selected" : ""}`,
+        href: "#memory-detail",
+        "aria-label": `Memory ${m.number}: ${m.text}`,
+        "data-memory": m.id,
       }),
       halo = svg("circle", { cx: m.x, cy: m.y, r: 17, class: "node-halo" }),
       dot = svg("circle", {
@@ -75,6 +79,10 @@ export function renderMemory(data, memoryQuery = "") {
     const title = svg("title");
     title.textContent = m.text;
     group.append(halo, dot, label, title);
+    group.addEventListener("click", () => {
+      selectedMemory = m.id;
+      renderMemory(data, memoryQuery);
+    });
     map.append(group);
   }
   if (!nodes.length) {
@@ -117,7 +125,7 @@ export function renderMemory(data, memoryQuery = "") {
     );
   else detail.append(el("p", "empty", "No memory selected."));
   if (focused)
-    [...list.querySelectorAll("button")]
-      .find((b) => b.dataset.memory === focused)
+    [...$("memory").querySelectorAll("[data-memory]")]
+      .find((b) => b.dataset.memory === focused && b.tagName === focusedTag)
       ?.focus({ preventScroll: true });
 }
