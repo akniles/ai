@@ -68,6 +68,12 @@
               ><span id="path-wait">Wait</span>
             </div>
             <p id="wake-status" class="wake-status">Connecting to the agent…</p>
+            <p id="wake-reason" class="wake-reason" hidden></p>
+            <div id="wake-source" class="wake-source" hidden></div>
+            <details class="working-state">
+              <summary>Working state</summary>
+              <pre id="working-state" class="result-output"></pre>
+            </details>
             <div class="last-action">
               <p class="eyebrow">Latest tool</p>
               <div id="latest-action">Waiting for an observation…</div>
@@ -154,7 +160,8 @@
         <div class="section-heading">
           <div>
             <h2>What stays with it.</h2>
-            <p>Explore the memories it chose to share.</p>
+            <p>What it learned, remembered and kept close.</p>
+            <p id="memory-status" class="detail-meta"></p>
           </div>
           <div class="memory-search">
             <label for="memory-search">Find a memory</label
@@ -175,10 +182,10 @@
               aria-labelledby="memory-map-title"
               aria-describedby="memory-caption"
             >
-              <title id="memory-map-title">Map of shared memories</title>
+              <title id="memory-map-title">Map of memories</title>
             </svg>
             <p id="memory-caption" class="map-caption">
-              Numbers match the memories below. Lines connect shared words, not
+              Select a memory to read it. Lines connect shared words, not
               learned relationships.
             </p>
             <div id="memory-list" class="memory-list"></div>
@@ -188,33 +195,17 @@
           </aside>
         </div>
       </section>
-      <section class="about-section">
-        <h2>From a personal assistant<br />to the mind of a robot.</h2>
-        <div>
-          <p>
-            This experiment explores what happens when AI can keep going without
-            another prompt. The ambition is a foundation for assistants that
-            have memory, initiative and a life beyond a conversation.
-          </p>
-          <p>
-            The interesting part is the gap: what it chooses, where it gets
-            stuck and what would make it more capable.
-          </p>
-          <p class="author">
-            Built by Aliaksei.
-            <a
-              id="linkedin-footer"
-              href="https://www.linkedin.com/in/aliaksei-s-125106116/"
-              target="_blank"
-              rel="noopener"
-              >Let’s compare notes on LinkedIn.</a
-            >
-          </p>
-        </div>
-      </section>
     </main>
     <footer>
-      <span>ai · An open experiment</span>
+      <span
+        >ai · Built by
+        <a
+          href="https://www.linkedin.com/in/aliaksei-s-125106116/"
+          target="_blank"
+          rel="noopener"
+          >Aliaksei Slinka</a
+        ></span
+      >
       <div>
         <a href="https://github.com/akniles/ai" target="_blank" rel="noopener"
           >Source code</a
@@ -226,7 +217,7 @@
     <dialog id="trace-dialog" aria-labelledby="trace-title" closedby="any">
       <header class="trace-header">
         <div>
-          <p class="eyebrow">Tool observation</p>
+          <p id="trace-kind" class="eyebrow">Observation</p>
           <h2 id="trace-title">Observation</h2>
         </div>
         <form method="dialog">

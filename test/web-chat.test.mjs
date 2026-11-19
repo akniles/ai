@@ -7,7 +7,7 @@ import { createControl } from "../src/control.mjs";
 import { createWeb } from "../src/web.mjs";
 import { WebChat, chatSession } from "../src/web-chat.mjs";
 import { Client } from "../src/client.mjs";
-import { waitForWake, wakeDelay } from "../src/worker.mjs";
+import { waitForWake, wakePlan } from "../src/worker.mjs";
 
 async function app(t) {
   const store = new Store(":memory:");
@@ -191,9 +191,9 @@ test("notifications wake an idle worker; muted messages do not; a fresh goal can
   });
   store.receive({ chat: "new", sender: "Visitor", body: "optional" });
   assert.equal(await waiting, "notification");
-  assert.equal(wakeDelay({ next_wake_seconds: 3600 }), 3600000);
+  assert.equal(wakePlan({ next_wake_seconds: 3600 }).delay, 3600000);
   assert.equal(
-    wakeDelay({ next_wake_seconds: 3600 }, { freshGoal: true }),
+    wakePlan({ next_wake_seconds: 3600 }, { freshGoal: true }).delay,
     15000,
   );
 });

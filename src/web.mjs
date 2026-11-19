@@ -7,6 +7,7 @@ const files = {
   "/app.js": ["app.js", "text/javascript; charset=utf-8"],
   "/ui.js": ["ui.js", "text/javascript; charset=utf-8"],
   "/activity.js": ["activity.js", "text/javascript; charset=utf-8"],
+  "/trace.js": ["trace.js", "text/javascript; charset=utf-8"],
   "/memory.js": ["memory.js", "text/javascript; charset=utf-8"],
   "/chat.js": ["chat.js", "text/javascript; charset=utf-8"],
   "/style.css": ["style.css", "text/css; charset=utf-8"],
@@ -102,7 +103,7 @@ export function createWeb(e = process.env) {
       }
       if (path === "/api/live" || /^\/api\/traces\/[a-f0-9]{32}$/.test(path)) {
         const target =
-          path === "/api/live" ? "/public" : path.replace("/api/", "/public/");
+          path === "/api/live" ? "/public" + new URL(req.url,"http://localhost").search : path.replace("/api/", "/public/");
         const r = await upstream(target, e.PUBLIC_VIEW_TOKEN);
         if (!r.ok) throw new Error("Agent feed unavailable");
         const data = await r.json();

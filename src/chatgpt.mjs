@@ -57,7 +57,7 @@ export class ChatGPTGateway {
       const usage={prompt_tokens:completed.usage?.input_tokens,completion_tokens:completed.usage?.output_tokens,total_tokens:completed.usage?.total_tokens};
       const result={id:completed.id,model:this.model,choices:[{message:{role:'assistant',content:text||null,...(calls.length?{tool_calls:calls}:{})}}],usage};
       this.store.event('llm.completed',{id,model:this.model,provider:'chatgpt-plan',usage});
-      this.telemetry?.record('llm',request,completed,start,{...body._context,callId:id,model:this.model,provider:'chatgpt-plan',usage});return result;
+      this.telemetry?.record(body._context?.role==='memory'?'llm.memory':'llm',request,result.choices[0].message,start,{...body._context,callId:id,responseId:completed.id,model:this.model,provider:'chatgpt-plan',usage});return result;
     }catch(e){this.store.event('llm.failed',{id,message:e.message,provider:'chatgpt-plan'});this.telemetry?.record('llm.error',request,{error:e.message},start,{...body._context,callId:id,model:this.model});throw e;}
     finally{this.active.delete(c);}
   }

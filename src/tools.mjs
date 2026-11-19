@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -23,14 +23,18 @@ export class Tools {
   }
   async update(job) {
     await this.client
+      .withContext({ ...job.context, spanId: job.executionId })
       .action("operation", {
         id: job.id,
         status: job.status,
+        startedAt: job.startedAt,
         data: { kind: job.kind, output: job.output, exitCode: job.exitCode },
       })
-      .catch(() => {});
+      .catch((error) =>
+        console.error(`Operation update failed: ${error.message}`),
+      );
   }
-  newJob(kind) {
+  newJob(kind, client) {
     if (this.jobs.size >= 100) {
       const old = [...this.jobs.values()].find((j) => j.status !== "running");
       if (old) this.jobs.delete(old.id);
@@ -39,40 +43,37 @@ export class Tools {
       [...this.jobs.values()].filter((j) => j.status === "running").length >= 4
     )
       throw new Error("Four concurrent jobs maximum");
-    const job = { id: randomUUID(), kind, status: "running", output: "" };
+    const job = {
+      id: randomUUID(),
+      executionId: randomBytes(8).toString("hex"),
+      kind,
+      status: "running",
+      output: "",
+      startedAt: Date.now(),
+      context: client.context,
+    };
     this.jobs.set(job.id, job);
     return job;
   }
   async execute(name, a = {}, depth = 0, sessionClient = this.client) {
     await this.client.request("/runtime/context");
-    const local = [
-      "shell_start",
-      "job_poll",
-      "job_cancel",
-      "skills_list",
-      "skill_read",
-      "skill_write",
-      "subagent_start",
-    ].includes(name);
+    const start = Date.now();
+    const traced = sessionClient.withContext({
+      spanId: randomBytes(8).toString("hex"),
+    });
+    const child = traced.withContext({
+      spanId: undefined,
+      parentSpanId: traced.context.spanId,
+    });
+    let output;
     try {
-      const result = await this.executeInner(name, a, depth, sessionClient);
-      if (local)
-        await sessionClient.action("tool_observation", {
-          tool: name,
-          input: a,
-          result,
-        });
-      return result;
-    } catch (e) {
-      if (local)
-        await sessionClient
-          .action("tool_observation", {
-            tool: name,
-            input: a,
-            result: { error: e.message },
-          })
-          .catch(() => {});
-      throw e;
+      output = await this.executeInner(name, a, depth, child);
+      return output;
+    } catch (error) {
+      output = { error: error.message };
+      throw error;
+    } finally {
+      await traced.observe("tool." + name, a, output, start);
     }
   }
   async executeInner(name, a = {}, depth = 0, sessionClient = this.client) {
@@ -80,7 +81,7 @@ export class Tools {
       case "shell_start": {
         if (typeof a.command !== "string" || a.command.length > 20000)
           throw new Error("Invalid command");
-        const job = this.newJob("shell");
+        const job = this.newJob("shell", sessionClient);
         const child = spawn(a.command, {
           cwd: this.workspace,
           shell: true,
@@ -134,7 +135,15 @@ export class Tools {
           throw new Error(
             "Operation not found in this worker; check persisted interrupted operations after restart",
           );
-        const { child, promise, abort, ...view } = j;
+        const {
+          child,
+          promise,
+          abort,
+          context,
+          startedAt,
+          executionId,
+          ...view
+        } = j;
         return view;
       }
       case "job_cancel": {
@@ -166,11 +175,13 @@ export class Tools {
         if (depth > 0) throw new Error("Subagent recursion disabled");
         if (typeof a.task !== "string" || a.task.length > 4000)
           throw new Error("Invalid task");
-        const j = this.newJob("subagent");
+        const j = this.newJob("subagent", sessionClient);
         j.abort = new AbortController();
-        j.promise = this.runSubagent(a.task, j.abort.signal)
+        j.promise = this.runSubagent(a.task, j.abort.signal, sessionClient)
           .then((r) => {
-            j.output = JSON.stringify(r).slice(-16000);
+            j.output = (typeof r === "string" ? r : JSON.stringify(r)).slice(
+              -16000,
+            );
             if (j.status === "running") j.status = "done";
           })
           .catch((e) => {

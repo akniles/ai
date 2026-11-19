@@ -7,11 +7,7 @@ import { DockerSupervisor } from "./supervisor.mjs";
 import { Telemetry } from "./telemetry.mjs";
 import { Memory } from "./memory.mjs";
 import { ChatGPTGateway } from "./chatgpt.mjs";
-import {
-  publicSnapshot,
-  publicObservation,
-  visibleObservation,
-} from "./public.mjs";
+import { publicSnapshot, publicObservation } from "./public.mjs";
 import { redact } from "./redact.mjs";
 import { Prompts } from "./prompts.mjs";
 import { WebChat, validChat } from "./web-chat.mjs";
@@ -107,7 +103,6 @@ export function createControl({
     });
   }
   async function action(a) {
-    const start = Date.now();
     let result;
     switch (a.name) {
       case "inbox_list":
@@ -132,13 +127,13 @@ export function createControl({
               a.source ?? "agent",
               a.kind ?? "observation",
               a.core === true,
-              a.public === true,
+              a.title === undefined ? null : text(a.title, 120),
             )
           : { saved: false };
         break;
       }
       case "memory_search":
-        result = await memory.search(text(a.query, 1000));
+        result = await memory.search(text(a.query, 1000), a._context);
         break;
       case "memory_core_set": {
         if (a.core && store.core().length >= 12)
@@ -172,51 +167,6 @@ export function createControl({
         });
         result = { ok: true };
         break;
-      case "public_note":
-        store.event("agent.public", { summary: text(a.summary, 1500) });
-        result = { published: true };
-        break;
-      case "publication_set": {
-        if (typeof a.public !== "boolean")
-          throw new Error("public must be boolean");
-        const id = text(a.id, 100);
-        if (a.kind === "memory") {
-          const table = "memories";
-          const row = store.db
-            .prepare(`SELECT * FROM ${table} WHERE id=?`)
-            .get(id);
-          if (!row) throw new Error("Record not found");
-          store.db
-            .prepare(`UPDATE ${table} SET public=? WHERE id=?`)
-            .run(Number(a.public), id);
-        } else if (a.kind === "operation") {
-          if (!store.db.prepare("SELECT id FROM operations WHERE id=?").get(id))
-            throw new Error("Operation not found");
-          if (a.public)
-            store.db
-              .prepare("INSERT OR REPLACE INTO publications VALUES (?,?,?,?,?)")
-              .run(
-                "operation",
-                id,
-                new Date().toISOString(),
-                text(a.summary, 1500),
-                typeof a.output === "string" ? a.output.slice(0, 6000) : "",
-              );
-          else
-            store.db
-              .prepare(
-                "DELETE FROM publications WHERE kind='operation' AND id=?",
-              )
-              .run(id);
-        } else throw new Error("Invalid publication kind");
-        store.event("publication.changed", {
-          kind: a.kind,
-          id,
-          public: a.public,
-        });
-        result = { published: a.public };
-        break;
-      }
       case "operation": {
         store.db
           .prepare("INSERT OR REPLACE INTO operations VALUES (?,?,?,?)")
@@ -225,6 +175,14 @@ export function createControl({
             new Date().toISOString(),
             text(a.status, 30),
             JSON.stringify(a.data ?? {}),
+          );
+        if (a.status !== "running")
+          telemetry?.record(
+            `execution.${a.data.kind}`,
+            { id: a.id },
+            { status: a.status, ...a.data },
+            a.startedAt,
+            a._context,
           );
         result = { ok: true };
         break;
@@ -235,14 +193,6 @@ export function createControl({
           .all()
           .map((r) => ({ ...r, data: JSON.parse(r.data) }));
         break;
-      case "tool_observation":
-        store.event("tool.executed", {
-          tool: a.tool,
-          input: a.input,
-          result: a.result,
-        });
-        result = { ok: true };
-        break;
       case "cycle":
         store.set("last_cycle", new Date().toISOString());
         store.event("agent.cycle", a.data ?? {});
@@ -251,9 +201,29 @@ export function createControl({
       case "scheduler_set": {
         if (!["working", "waiting", "backoff"].includes(a.phase))
           throw new Error("Invalid scheduler phase");
+        if (a.phase === "working") {
+          const state = store.get("working_state") ?? {};
+          // A requested delay belongs to one work period, not every future period.
+          for (const key of [
+            "next_wake_seconds",
+            "pause_seconds",
+            "next_wake",
+            "pause_reason",
+          ])
+            delete state[key];
+          store.set("working_state", state);
+          store.set("wake_request_source", null);
+          store.set("work_source", null);
+        }
         const next = Date.parse(a.nextWakeAt);
         store.set("scheduler", {
           phase: a.phase,
+          origin: a.origin ?? null,
+          reason: a.reason ?? null,
+          source:
+            store.get(
+              a.origin === "agent" ? "wake_request_source" : "work_source",
+            ) ?? null,
           nextWakeAt:
             a.phase === "working"
               ? null
@@ -266,15 +236,8 @@ export function createControl({
       default:
         throw new Error("Unknown action");
     }
-    if (
-      !["tool_observation", "operation", "operation_list", "cycle"].includes(
-        a.name,
-      )
-    )
+    if (!["operation", "operation_list", "cycle"].includes(a.name))
       store.event("tool.used", { tool: a.name });
-    if (a.name === "tool_observation")
-      telemetry?.record(`tool.${a.tool}`, a.input, a.result, start, a._context);
-    else telemetry?.record(`tool.${a.name}`, a, result, start, a._context);
     return result;
   }
   const server = http.createServer(async (req, res) => {
@@ -298,6 +261,25 @@ export function createControl({
         visitor = !!webChatToken && equal(token, webChatToken);
       if (!owner && !runtime && !mem && !viewer && !visitor)
         return send(401, { error: "Unauthorized" });
+      if (
+        (runtime || owner) &&
+        path === "/runtime/observation" &&
+        req.method === "POST"
+      ) {
+        const b = await json(req);
+        const observation = telemetry?.record(
+          b.name,
+          b.input,
+          b.output,
+          b.start,
+          b._context,
+        );
+        if (b.name === "tool.state_set" && b.output?.ok)
+          store.set("wake_request_source", observation ?? null);
+        if (["agent.work", "agent.goal_selection"].includes(b.name))
+          store.set("work_source", observation ?? null);
+        return send(200, observation ?? null);
+      }
       if (visitor && path === "/website/chat" && req.method === "POST") {
         const b = await json(req);
         // Visitor text, including /panic, is data. This path has no owner-command handling.
@@ -331,10 +313,13 @@ export function createControl({
         return send(200, await prompts.bundle());
       }
       if ((viewer || owner) && req.method === "GET" && path === "/public") {
-        let observations = [];
+        let page = { rows: [], cursor: null };
         let tracingAvailable = true;
         try {
-          observations = (await telemetry?.observations()) ?? [];
+          const cursor = new URL(req.url, "http://localhost").searchParams.get(
+            "cursor",
+          );
+          page = (await telemetry?.observations(undefined, cursor)) ?? page;
         } catch {
           tracingAvailable = false;
         }
@@ -342,7 +327,8 @@ export function createControl({
           200,
           redact(
             {
-              ...publicSnapshot(store, gateway, observations),
+              ...publicSnapshot(store, gateway, page.rows),
+              nextCursor: page.cursor,
               tracingAvailable,
             },
             [
@@ -362,11 +348,17 @@ export function createControl({
         /^\/public\/traces\/[a-f0-9]{32}$/.test(path)
       ) {
         const traceId = path.split("/").at(-1);
-        const rows = (await telemetry?.observations(traceId)) ?? [];
+        const rows = [];
+        let cursor;
+        do {
+          const page = await telemetry.observations(traceId, cursor);
+          rows.push(...page.rows);
+          cursor = page.cursor;
+        } while (cursor);
         const observations = rows
-          .filter((o) => o.traceId === traceId && visibleObservation(o))
+          .filter((o) => o.traceId === traceId)
           .map((o) =>
-            publicObservation(store, o, [
+            publicObservation(o, [
               ownerToken,
               runtimeToken,
               memoryToken,
@@ -436,6 +428,8 @@ export function createControl({
         if (store.get("panic")) return send(423, { error: "Runtime stopped" });
         const b = await json(req);
         // Recheck after consuming the request body; panic can arrive while it streams.
+        if (mem)
+          b._context = { role: "memory", traceName: "Memory model call" };
         return send(200, await gateway.complete(b));
       }
       return send(403, { error: "Forbidden" });

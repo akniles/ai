@@ -570,30 +570,6 @@ input[type="search"] {
   font-size: 1.125rem;
   overflow-wrap: anywhere;
 }
-.about-section {
-  margin-top: 80px;
-  padding-top: 48px;
-  border-top: 1px solid var(--line);
-  display: grid;
-  grid-template-columns: 1.2fr 1fr;
-  gap: 64px;
-}
-.about-section > div {
-  color: var(--muted);
-  max-width: 55ch;
-}
-.about-section h2 {
-  font-size: clamp(2rem, 3.5vw, 3.4rem);
-}
-.author {
-  margin-top: 24px;
-  color: var(--text);
-}
-.author a {
-  color: var(--accent);
-  text-decoration: underline;
-  text-underline-offset: 4px;
-}
 footer {
   display: flex;
   justify-content: space-between;
@@ -707,8 +683,7 @@ dialog::backdrop {
     margin-bottom: 8px;
   }
   .live-grid,
-  .memory-panel,
-  .about-section {
+  .memory-panel {
     grid-template-columns: 1fr;
   }
   .goal-board {
@@ -727,10 +702,6 @@ dialog::backdrop {
   }
   .explore-section {
     padding-top: 52px;
-  }
-  .about-section {
-    gap: 28px;
-    margin-top: 56px;
   }
 }
 @media (max-width: 480px) {
@@ -788,4 +759,70 @@ dialog::backdrop {
   html {
     scroll-behavior: auto;
   }
+}
+
+.wake-reason {
+  color: var(--muted);
+  font-size: 0.875rem;
+  margin: 8px 0;
+  line-height: 1.55;
+}
+.wake-source {
+  margin: 10px 0;
+}
+.event-reason {
+  color: var(--muted);
+  margin-top: 8px;
+  font-size: 0.875rem;
+}
+.trace-title {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+  text-underline-offset: 5px;
+}
+.trace-tree {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0;
+}
+.trace-tree .trace-tree {
+  margin: 0 0 0 14px;
+  padding-left: 14px;
+  border-left: 1px solid var(--line);
+}
+.trace-step {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 16px;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  padding: 14px 6px;
+  text-align: left;
+  background: none;
+  color: var(--text);
+}
+.trace-step:hover {
+  background: #182833;
+}
+.trace-error > .trace-step {
+  color: #ffb8a8;
+}
+.trace-back {
+  padding: 8px 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+}
+.memory-title {
+  margin: 12px 0 18px;
+  font-size: 1.2rem;
 }

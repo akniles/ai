@@ -20,20 +20,24 @@ export class Store {
       CREATE TABLE IF NOT EXISTS calls (id TEXT PRIMARY KEY, time TEXT, reserved REAL, cost REAL, status TEXT, usage TEXT);
       CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, time TEXT, status TEXT, data TEXT);
       CREATE TABLE IF NOT EXISTS decisions (fact TEXT PRIMARY KEY, save INTEGER, reason TEXT, time TEXT);
-      CREATE TABLE IF NOT EXISTS publications (kind TEXT, id TEXT, time TEXT, summary TEXT, output TEXT, PRIMARY KEY(kind,id));
     `);
     for (const table of ["memories", "goals"]) {
       if (
-        !this.db
-          .prepare(`PRAGMA table_info(${table})`)
+        this.db
+          .prepare("PRAGMA table_info(" + table + ")")
           .all()
           .some((c) => c.name === "public")
       )
-        this.db.exec(
-          `ALTER TABLE ${table} ADD COLUMN public INTEGER NOT NULL DEFAULT 0`,
-        );
+        this.db.exec("ALTER TABLE " + table + " DROP COLUMN public");
     }
-    this.db.prepare("UPDATE goals SET public=1 WHERE public=0").run();
+    this.db.exec("DROP TABLE IF EXISTS publications");
+    if (
+      !this.db
+        .prepare("PRAGMA table_info(memories)")
+        .all()
+        .some((c) => c.name === "title")
+    )
+      this.db.exec("ALTER TABLE memories ADD COLUMN title TEXT");
     if (this.get("panic") === undefined) this.set("panic", true);
     if (!this.get("born")) this.set("born", new Date().toISOString());
     // A crashed request may still have been billed. Keep its whole reservation.
@@ -143,7 +147,7 @@ export class Store {
     source = "agent",
     kind = "observation",
     core = false,
-    published = false,
+    title = null,
   ) {
     const id = randomUUID(),
       time = new Date().toISOString();
@@ -155,9 +159,9 @@ export class Store {
       throw new Error("Core memory full; demote an existing entry first");
     this.db
       .prepare(
-        "INSERT INTO memories(id,text,source,time,kind,core,public) VALUES (?,?,?,?,?,?,?)",
+        "INSERT INTO memories(id,text,source,time,kind,core,title) VALUES (?,?,?,?,?,?,?)",
       )
-      .run(id, text, source, time, kind, Number(core), Number(published));
+      .run(id, text, source, time, kind, Number(core), title);
     this.db.prepare("INSERT INTO memory_fts VALUES (?,?)").run(id, text);
     this.event("memory.saved", { id, kind, core });
     return { id };
@@ -165,7 +169,7 @@ export class Store {
   core() {
     return this.db
       .prepare(
-        "SELECT id,text,source,time,kind,public FROM memories WHERE core=1 ORDER BY time DESC LIMIT 12",
+        "SELECT id,title,text,source,time,kind FROM memories WHERE core=1 ORDER BY time DESC LIMIT 12",
       )
       .all();
   }
@@ -188,10 +192,10 @@ export class Store {
   goal(text, status = "active", id = randomUUID()) {
     this.db
       .prepare(
-        "INSERT INTO goals(id,text,status,updated,public) VALUES (?,?,?,?,1) ON CONFLICT(id) DO UPDATE SET text=excluded.text,status=excluded.status,updated=excluded.updated,public=1",
+        "INSERT INTO goals(id,text,status,updated) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET text=excluded.text,status=excluded.status,updated=excluded.updated",
       )
       .run(id, text, status, new Date().toISOString());
-    this.event("goal.changed", { id, text, status, public: true });
+    this.event("goal.changed", { id, text, status });
     return { id };
   }
   committed() {
@@ -241,7 +245,7 @@ export class Store {
       goals: this.goals(),
       recentGoals: this.db
         .prepare(
-          "SELECT id,text,status,updated,public FROM goals WHERE status!='active' ORDER BY updated DESC LIMIT 12",
+          "SELECT id,text,status,updated FROM goals WHERE status!='active' ORDER BY updated DESC LIMIT 12",
         )
         .all(),
       coreMemory: this.core(),

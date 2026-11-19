@@ -37,7 +37,7 @@ test("activity groups only observations of the same trace, keeps event order and
   const items = activityItems(data);
   assert.deepEqual(
     items.map((i) => i.id),
-    ["first", "note"],
+    ["first", "note", "second"],
   );
   assert.deepEqual(
     items[0].observations.map((o) => o.id),

@@ -1,30 +1,11 @@
 import { $, el, clock, date, goalLabels } from "./ui.js";
-
-const toolTitles = {
-  shell_start: "Tried running code",
-  subagent_start: "Started a subagent",
-  memory_decide: "Decided what to remember",
-  memory_search: "Searched its memory",
-  goal_set: "Revisited its goals",
-  inbox_read: "Read a message",
-  inbox_reply: "Chose to reply",
-  chat_set: "Changed a chat’s settings",
-  skill_read: "Read a skill",
-  skill_write: "Wrote a skill",
-  skills_list: "Looked for skills",
-  job_poll: "Checked an action’s result",
-  job_cancel: "Cancelled an action",
-  public_note: "Left a note",
-  journal: "Recorded a decision",
-  state_set: "Updated its plans",
-};
+import { observationName } from "./trace.js";
 
 // Group only observations with the same trace ID. The UI does not infer goals
 // or reasoning from model output. Notes and goal changes keep their own times.
 export function activityItems(data, toolsOnly = false) {
   const groups = new Map();
   for (const o of data.observations ?? []) {
-    if (!o.name.startsWith("tool.") && o.type !== "GENERATION") continue;
     if (toolsOnly && !o.name.startsWith("tool.")) continue;
     const group = groups.get(o.traceId) ?? {
       id: o.traceId,
@@ -38,16 +19,14 @@ export function activityItems(data, toolsOnly = false) {
   const events = toolsOnly
     ? []
     : data.events.filter((e) => e.category !== "sharing");
-  const traces = [...groups.values()].filter((group) =>
-    group.observations.some((o) => o.name.startsWith("tool.")),
-  );
+  const traces = [...groups.values()];
   return [...events, ...traces].sort(
     (a, b) => new Date(b.time) - new Date(a.time),
   );
 }
 
 export function toolButton(observation, openTrace) {
-  const name = observation.name.replace(/^tool\./, "");
+  const name = observationName(observation);
   const button = el("button", "tool-link", name);
   button.dataset.observation = observation.id;
   button.setAttribute("aria-label", `${name} at ${clock(observation.start)}`);
@@ -82,16 +61,35 @@ export function renderActivity(data, { toolsOnly, shown, openTrace }) {
       const names = [
         ...new Set(tools.map((o) => o.name.replace(/^tool\./, ""))),
       ];
-      const title =
-        names.map((n) => toolTitles[n]).find(Boolean) ?? "Used tools";
       const details = el("details", "trace-group");
       details.dataset.id = item.id;
       details.open = openIds.has(item.id);
       const summary = el("summary");
-      summary.textContent = "Full trace";
-      summary.setAttribute("aria-label", `Full trace at ${date(item.time)}`);
+      summary.textContent = "Steps";
+      summary.setAttribute(
+        "aria-label",
+        `Steps in trace at ${date(item.time)}`,
+      );
       details.append(summary);
-      body.append(el("p", "event-title", title));
+      const root = item.observations.find(
+        (o) => !o.parentId && o.name.startsWith("agent."),
+      );
+      const title = el(
+        "button",
+        "event-title trace-title",
+        root ? observationName(root) : "Execution trace",
+      );
+      title.addEventListener("click", () =>
+        openTrace(item.observations[0], true),
+      );
+      body.append(
+        title,
+        el(
+          "p",
+          "detail-meta",
+          `${item.observations.filter((o) => o.type === "GENERATION").length} model calls · ${tools.length} tool calls`,
+        ),
+      );
       const toolStrip = el("div", "tool-strip");
       for (const name of names)
         toolStrip.append(
@@ -134,12 +132,13 @@ export function renderActivity(data, { toolsOnly, shown, openTrace }) {
       body.append(el("p", "event-title", title));
       if (item.note || item.text)
         body.append(el("p", "event-note", item.note ?? item.text));
+      if (item.reason) body.append(el("p", "event-reason", item.reason));
     }
     row.append(time, body);
     timeline.append(row);
   }
   if (!items.length) timeline.append(el("p", "empty", "No observations yet."));
-  $("more").hidden = items.length <= shown;
+  $("more").hidden = items.length <= shown && !data.nextCursor;
   if (focused)
     [...timeline.querySelectorAll("button")]
       .find((b) => b.dataset.observation === focused)
