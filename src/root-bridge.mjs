@@ -45,6 +45,7 @@ export function createRootBridge({ url, token }) {
     }
     if (response.status === stoppedStatus) throw new RootRuntimeStopped();
     if (!response.ok) throw new Error(`Root control rejected the request (HTTP ${response.status})`);
+    if (response.status === 204) return null;
     try {
       return await response.json();
     } catch {
@@ -53,6 +54,8 @@ export function createRootBridge({ url, token }) {
   }
 
   let goalId;
+  let claimedId;
+  let replyAttempted = false;
 
   return Object.freeze({
     async context() {
@@ -71,6 +74,28 @@ export function createRootBridge({ url, token }) {
         if (error instanceof RootRuntimeStopped) return null;
         throw error;
       }
+    },
+
+    async claimOwnerMessage() {
+      if (claimedId) return null;
+      const pending = await request("/runtime/inbox/next");
+      if (pending === null) return null;
+      if (!pending || typeof pending.id !== "string" || !/^[a-zA-Z0-9_-]{1,100}$/.test(pending.id) ||
+          typeof pending.text !== "string" || !pending.text.trim() || pending.text.length > 2000)
+        throw new Error("Invalid private owner message");
+      claimedId = pending.id;
+      return { text: pending.text };
+    },
+
+    async replyToOwnerMessage(body) {
+      if (!claimedId || replyAttempted) throw new Error("No available owner message claim");
+      if (typeof body !== "string" || !body.trim() || body.length > 2000 || body.includes(token))
+        throw new Error("Invalid private owner reply");
+      replyAttempted = true;
+      const result = await request("/runtime/inbox/reply", { id: claimedId, body });
+      if (result?.ok !== true) throw new Error("Private owner reply was not accepted");
+      claimedId = undefined;
+      replyAttempted = false;
     },
 
     async setGoal({ text, status = "active", id }) {
