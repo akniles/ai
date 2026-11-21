@@ -12,7 +12,7 @@ Open http://localhost:3000. No dependencies, model, or secrets are needed for th
 
 ## Private Pi run
 
-The operator supplies a short-lived access token from the existing authorized ChatGPT session through stdin, not command arguments, and sets local Langfuse settings and `PUBLIC_RUN_FILE`. Run `npm ci --ignore-scripts` before starting an unprivileged private worker. `npm run run:pi` sends only a tile puzzle to the model and exits after two turns. SIGTERM or SIGINT cancels work. The site reads only the explicitly public snapshot, never credentials or Langfuse configuration. When no result is published, it replays a labeled example. No model starts from a Git push.
+The operator supplies a short-lived access token from the existing authorized ChatGPT session through stdin, not command arguments, and sets local Langfuse settings and `PUBLIC_RUN_FILE`. The runner loads the `production` versions of `ai-poc-system`, `ai-poc-turn-1` and `ai-poc-turn-2` directly from Langfuse at start. It fails closed if a prompt is unavailable. Run `npm ci --ignore-scripts` before starting an unprivileged private worker. `npm run run:pi` sends only a tile puzzle to the model and exits after two turns. SIGTERM or SIGINT cancels work. The site reads only the explicitly public snapshot, never credentials or Langfuse configuration. When no result is published, it replays a labeled example. No model starts from a Git push.
 
 ## Fast end-to-end workflow
 
