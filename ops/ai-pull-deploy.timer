@@ -1,0 +1,10 @@
+[Unit]
+Description=Poll the ai PoC release branch
+
+[Timer]
+OnBootSec=1m
+OnUnitInactiveSec=90s
+Unit=ai-pull-deploy.service
+
+[Install]
+WantedBy=timers.target

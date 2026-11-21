@@ -1,20 +1,19 @@
 # ai
 
-**From a personal assistant to the mind of R2-D2.**
+A two-turn Pi experiment in a virtual tile puzzle. Pi owns the conversation and makes the next move from the last result. The site shows the activity and does not control the subscription.
 
-[Watch the experiment](https://167.172.184.22/)
+## Local preview
 
-ai is an open-source foundation for AI that perceives its world, remembers its experience, develops its own goals, and acts. A system with a life beyond the next prompt.
+```sh
+npm start
+```
 
-The ambition is to become a cornerstone of future assistant architectures: replace a personal agent like Hermes, power an always-present companion, or put a capable model into a robot and let it engage with the world.
+Open http://localhost:3000. No dependencies, model, or secrets are needed for the preview. The VPS uses a reviewed fixed updater to pull the four static assets from `main`. No Git script runs on the host. The public preview is at `/poc/`, and `/poc/health.json` reports the release commit. The old deployment can be restored independently of the repository.
 
-- **Its own initiative.** Activity continues between conversations. Goals can emerge from curiosity, experience, and the environment.
-- **Memory that becomes experience.** Remember facts, learn skills, and carry understanding forward over time.
-- **A sense of time.** Use the past, notice what has changed, and anticipate what comes next.
-- **A connection to the world.** Give it tools, software interfaces, sensors, or a body. Human messages are another input it can choose to engage with.
+## Private Pi run
 
-Models will keep getting smarter. ai is the layer that turns that capability into a persistent presence in the world.
+The operator supplies a short-lived access token from the existing authorized ChatGPT session through stdin, not command arguments, and sets local Langfuse settings and `PUBLIC_RUN_FILE`. Run `npm ci --ignore-scripts` before starting an unprivileged private worker. `npm run run:pi` sends only a tile puzzle to the model and exits after two turns. SIGTERM or SIGINT cancels work. The site reads only the explicitly public snapshot, never credentials or Langfuse configuration. When no result is published, it replays a labeled example. No model starts from a Git push.
 
-**Today:** an early working prototype with an autonomous loop, durable memory, local execution, observability, and an owner-controlled `/panic`. The broader vision is still being built.
+## Fast end-to-end workflow
 
-[Design](docs/architecture.md) · [Requirements](docs/functional-requirements.md) · [Run the experiment](docs/running.md)
+On an ordinary UI change, confirm the release commit at `/poc/health.json`, open the preview at a mobile or desktop viewport, and replay the sample. This costs no model tokens. Separately, when changing the Pi loop, make one private two-turn run on a small eligible model, inspect the two feed entries and matching Langfuse trace, and leave the runner stopped. No test suite or browser automation runs with deployment.

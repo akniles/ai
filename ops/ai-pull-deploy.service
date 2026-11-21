@@ -1,0 +1,17 @@
+[Unit]
+Description=Fetch and publish the static ai PoC
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ai-pull-deploy
+StateDirectory=ai-pull-deploy
+StateDirectoryMode=0700
+ProtectSystem=strict
+ReadWritePaths=/opt/ai/.local/https/acme/ai-poc
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+UMask=0077
+TimeoutStartSec=75

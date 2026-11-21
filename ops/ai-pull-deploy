@@ -1,0 +1,44 @@
+#!/bin/bash
+# Install a reviewed host-owned copy outside the fetched object store.
+set -euo pipefail
+umask 077
+export PATH=/usr/bin:/bin HOME=/var/lib/ai-pull-deploy GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0
+state=/var/lib/ai-pull-deploy
+repo=$state/source.git
+site=/opt/ai/.local/https/acme/ai-poc
+origin=https://github.com/akniles/ai.git
+exec 9>"$state/deploy.lock"
+flock -n 9 || exit 0
+[[ -d $site && ! -L $site && -d $site/releases && ! -L $site/releases ]]
+[[ -d $repo ]] || git init --bare "$repo"
+g() { git --git-dir="$repo" -c core.hooksPath=/dev/null -c protocol.allow=never -c protocol.https.allow=always "$@"; }
+g -c http.followRedirects=false fetch --no-tags --depth=1 "$origin" +refs/heads/main:refs/heads/candidate
+sha=$(g rev-parse --verify 'refs/heads/candidate^{commit}')
+[[ $sha =~ ^[a-f0-9]{40}$ ]]
+if [[ $(readlink "$site/current" || true) == "releases/$sha" ]]; then exit 0; fi
+release=$site/releases/$sha
+if [[ ! -e $release ]]; then
+  tmp=$(mktemp -d "$site/releases/.candidate.XXXXXXXX")
+  trap 'if [[ -n ${tmp:-} ]]; then rm -f -- "$tmp"/{index.html,app.js,style.css,preview.json,health.json}; rmdir -- "$tmp"; fi; if [[ -n ${linkstage:-} ]]; then rm -f -- "$linkstage/current"; rmdir -- "$linkstage"; fi' EXIT
+  for asset in index.html app.js style.css preview.json; do
+    f=web/$asset
+    entry=$(g ls-tree "$sha" -- "$f")
+    [[ $entry == "100644 blob "* || $entry == "100755 blob "* ]]
+    size=$(g cat-file -s "$sha:$f")
+    [[ $size -gt 0 && $size -le 1048576 ]]
+    g cat-file blob "$sha:$f" > "$tmp/$asset"
+    chmod 0644 "$tmp/$asset"
+  done
+  printf '{"ok":true,"commit":"%s"}\n' "$sha" > "$tmp/health.json"
+  chmod 0644 "$tmp/health.json"
+  chmod 0755 "$tmp"
+  mv -T -- "$tmp" "$release"
+  tmp=
+fi
+[[ -d $release && ! -L $release ]]
+for f in index.html app.js style.css preview.json health.json; do [[ -f $release/$f && ! -L $release/$f ]]; done
+linkstage=$(mktemp -d "$site/.pointer.XXXXXXXX")
+trap 'rm -f -- "$linkstage/current"; rmdir -- "$linkstage"' EXIT
+ln -s "releases/$sha" "$linkstage/current"
+mv -Tf -- "$linkstage/current" "$site/current"
+printf 'Serving static preview commit %s\n' "$sha"

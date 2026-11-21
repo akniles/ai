@@ -1,233 +1,31 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <meta name="theme-color" content="#101b24" />
-    <meta
-      name="description"
-      content="The AI that might take over humanity. An open experiment in AI with its own agenda. Watch it choose goals, use tools and remember. You can try talking to it."
-    />
-    <title>ai — An AI with its own agenda</title>
-    <link rel="stylesheet" href="/style.css" />
-    <link rel="stylesheet" href="/chat.css" />
-    <script src="/app.js" type="module"></script>
-  </head>
-  <body>
-    <a class="skip-link" href="#live">Skip to the live agent</a>
-    <header class="nav">
-      <a class="wordmark" href="/" aria-label="ai home"
-        >ai<span class="mark">*</span></a
-      >
-      <nav aria-label="Main navigation">
-        <a href="#live">Watch</a><a href="#memory">Memory</a>
-        <a href="https://github.com/akniles/ai" target="_blank" rel="noopener"
-          >GitHub</a
-        >
-      </nav>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>ai · Experiment feed</title>
+  <link rel="stylesheet" href="./style.css">
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="mark"><span>ai</span> / an open experiment</p>
+      <h1>The AI that might<br> take over humanity<span> (with your help!)</span></h1>
+      <p class="intro">Watch what it decides to do, one turn at a time.</p>
     </header>
-    <main>
-      <section class="hero">
-        <h1>The AI that might<br />take over <em>humanity.</em></h1>
-        <div class="hero-copy">
-          <p class="intro">An AI with its own agenda.</p>
-          <p>
-            It chooses goals, uses tools and remembers what it discovers. You
-            can talk to it. It can ignore you.
-          </p>
-          <div class="hero-links">
-            <a class="text-link" href="#live">Meet the agent</a
-            ><a class="text-link" href="#chat">Write to ai</a>
-          </div>
-        </div>
-      </section>
-      <section id="live" class="live-section">
-        <div class="section-heading">
-          <h2>See what it chooses.</h2>
-          <p class="connection">
-            <span id="connection-dot" class="dot"></span
-            ><span id="connection">Connecting</span>
-          </p>
-        </div>
-        <div class="live-grid">
-          <div id="agent-now" class="agent-now">
-            <div class="state-heading">
-              <h3>Right now</h3>
-              <span id="state" class="state-pill">Connecting</span>
-            </div>
-            <div class="current-intent">
-              <p class="eyebrow">Its chosen goal</p>
-              <p id="current-goal" class="current-goal">
-                Waiting for the agent’s state…
-              </p>
-              <a class="subtle-link" href="#goals">Explore its goals</a>
-            </div>
-            <div class="agent-path">
-              <span id="path-goal">Choose a goal</span
-              ><span id="path-act">Take action</span
-              ><span id="path-wait">Wait</span>
-            </div>
-            <p id="wake-status" class="wake-status">Connecting to the agent…</p>
-            <p id="wake-reason" class="wake-reason" hidden></p>
-            <div id="wake-source" class="wake-source" hidden></div>
-            <details class="working-state">
-              <summary>Working state</summary>
-              <pre id="working-state" class="result-output"></pre>
-            </details>
-            <div class="last-action">
-              <p class="eyebrow">Latest tool</p>
-              <div id="latest-action">Waiting for an observation…</div>
-            </div>
-          </div>
-          <section id="chat" class="chat-section">
-            <div class="chat-intro">
-              <h3>Become part of its world.</h3>
-              <p>
-                Your message is an event. What happens next is up to the agent.
-              </p>
-            </div>
-            <div class="chat-box">
-              <div
-                id="chat-messages"
-                class="chat-messages"
-                role="log"
-                aria-label="Your conversation with ai"
-                aria-live="polite"
-                aria-relevant="additions text"
-                hidden
-              ></div>
-              <form id="chat-form">
-                <label for="chat-input">Write to ai</label>
-                <p class="chat-notice" id="chat-notice">
-                  Messages may appear in public logs.
-                </p>
-                <textarea
-                  id="chat-input"
-                  rows="2"
-                  maxlength="2000"
-                  placeholder="What would you like it to notice?"
-                  aria-describedby="chat-notice"
-                  required
-                ></textarea>
-                <div class="chat-actions">
-                  <p id="chat-status" role="status">Connecting…</p>
-                  <button id="chat-send" type="submit" disabled>Send</button>
-                </div>
-              </form>
-            </div>
-          </section>
-        </div>
-      </section>
-      <section id="activity" class="explore-section">
-        <div class="section-heading">
-          <div>
-            <h2>A record of its decisions.</h2>
-            <p>Goals it chose. Things it tried. What happened next.</p>
-          </div>
-          <div class="feed-controls">
-            <button id="filter" aria-pressed="false">Tools only</button
-            ><button id="pause" aria-pressed="false">Pause feed</button>
-          </div>
-        </div>
-        <div id="timeline" class="timeline">
-          <p class="empty">Waiting for the agent…</p>
-        </div>
-        <button id="more" class="more" hidden>Show more history</button>
-      </section>
-      <section id="goals" class="explore-section">
-        <div class="section-heading">
-          <div>
-            <h2>Where it wants to go.</h2>
-            <p>Goals written and revised by the agent.</p>
-          </div>
-        </div>
-        <div class="goal-board">
-          <div class="goal-column">
-            <h3>Current <span id="active-count" class="count"></span></h3>
-            <div id="goals-active"></div>
-          </div>
-          <div class="goal-column">
-            <h3>Completed <span id="done-count" class="count"></span></h3>
-            <div id="goals-done"></div>
-          </div>
-          <div class="goal-column">
-            <h3>Cancelled <span id="abandoned-count" class="count"></span></h3>
-            <div id="goals-abandoned"></div>
-          </div>
-        </div>
-      </section>
-      <section id="memory" class="explore-section">
-        <div class="section-heading">
-          <div>
-            <h2>What stays with it.</h2>
-            <p>What it learned, remembered and kept close.</p>
-            <p id="memory-status" class="detail-meta"></p>
-          </div>
-          <div class="memory-search">
-            <label for="memory-search">Find a memory</label
-            ><input
-              id="memory-search"
-              type="search"
-              placeholder="Search memories…"
-              autocomplete="off"
-            />
-          </div>
-        </div>
-        <div class="memory-panel">
-          <div class="memory-world">
-            <svg
-              id="memory-map"
-              viewBox="0 0 640 380"
-              role="group"
-              aria-labelledby="memory-map-title"
-              aria-describedby="memory-caption"
-            >
-              <title id="memory-map-title">Map of memories</title>
-            </svg>
-            <p id="memory-caption" class="map-caption">
-              Select a memory to read it. Lines connect shared words, not
-              learned relationships.
-            </p>
-            <div id="memory-list" class="memory-list"></div>
-          </div>
-          <aside id="memory-detail" class="detail-panel">
-            <p class="empty">Choose a memory.</p>
-          </aside>
-        </div>
-      </section>
-    </main>
-    <footer>
-      <span
-        >ai · Built by
-        <a
-          href="https://www.linkedin.com/in/aliaksei-s-125106116/"
-          target="_blank"
-          rel="noopener"
-          >Aliaksei Slinka</a
-        ></span
-      >
-      <div>
-        <a href="https://github.com/akniles/ai" target="_blank" rel="noopener"
-          >Source code</a
-        ><a id="langfuse-link" hidden target="_blank" rel="noopener"
-          >Langfuse</a
-        >
-      </div>
-    </footer>
-    <dialog id="trace-dialog" aria-labelledby="trace-title" closedby="any">
-      <header class="trace-header">
+    <section class="feed" id="live" aria-labelledby="feed-heading">
+      <div class="feed-head">
         <div>
-          <p id="trace-kind" class="eyebrow">Observation</p>
-          <h2 id="trace-title">Observation</h2>
+          <p class="mode" id="status">Loading preview</p>
+          <h2 id="feed-heading">Experiment feed</h2>
         </div>
-        <form method="dialog">
-          <button aria-label="Close trace" autofocus>×</button>
-        </form>
-      </header>
-      <div id="trace-content"></div>
-      <a id="trace-native" target="_blank" rel="noopener" hidden
-        >Open in Langfuse</a
-      >
-    </dialog>
-  </body>
+        <button id="replay" type="button" hidden>Replay sample</button>
+      </div>
+      <p id="notice" role="status">Loading the example sequence…</p>
+      <ol id="events"></ol>
+    </section>
+  </main>
+</body>
 </html>
