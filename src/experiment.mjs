@@ -5,8 +5,8 @@ import { createModels, hasApi } from '@earendil-works/pi-ai';
 import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
 import { createRootBridge } from './root-bridge.mjs';
 
-const { PUBLIC_RUN_FILE: outputFile, PI_MODEL, LANGFUSE_URL, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY } = process.env;
-if (!outputFile || !LANGFUSE_URL || !LANGFUSE_PUBLIC_KEY || !LANGFUSE_SECRET_KEY) {
+const { PUBLIC_RUN_FILE: outputFile, PI_MODEL, LANGFUSE_URL } = process.env;
+if (!outputFile || !LANGFUSE_URL) {
   console.error('Set the public snapshot and Langfuse configuration in the private launcher.');
   process.exit(2);
 }
@@ -17,7 +17,8 @@ const spans = [];
 const traceStarted = stamp();
 const promptNames = ['ai-identity', 'ai-goal-selection', 'ai-invocation'];
 const recentInputs = [];
-const bridge = process.env.PI_CONTROL_URL ? createRootBridge({ url: process.env.PI_CONTROL_URL, token: process.env.PI_RUNTIME_TOKEN }) : null;
+let bridge;
+let langfuseAuth;
 let stopped = false;
 let agent;
 let pausePoll;
@@ -38,7 +39,6 @@ process.on('SIGTERM', stop);
 
 const attr = (key, text) => ({ key, value: { stringValue: String(text) } });
 const intAttr = (key, value) => ({ key, value: { intValue: String(value) } });
-const langfuseAuth = 'Basic ' + Buffer.from(LANGFUSE_PUBLIC_KEY + ':' + LANGFUSE_SECRET_KEY).toString('base64');
 async function loadPrompt(name) {
   const url = new URL('/api/public/v2/prompts/' + encodeURIComponent(name), LANGFUSE_URL);
   url.searchParams.set('label', 'production');
@@ -85,14 +85,26 @@ async function exportTrace() {
 
 let status = 'Stopped';
 try {
-  // Anonymous stdin carries only the existing grant's short-lived access token.
-  let accessToken = '';
+  // Credentials are supplied in memory on the private attached input stream.
+  let envelope = '';
   for await (const chunk of process.stdin.setEncoding('utf8')) {
-    accessToken += chunk;
-    if (accessToken.length > 16_384) throw new Error('Invalid credential input');
+    envelope += chunk;
+    if (envelope.length > 32_768) throw new Error('Invalid credential input');
   }
-  accessToken = accessToken.trim();
-  if (!accessToken || stopped) throw new Error('No access token supplied');
+  const input = envelope.trim();
+  const credentials = input.startsWith('{') ? JSON.parse(input) : {
+    accessToken: input,
+    langfusePublicKey: process.env.LANGFUSE_PUBLIC_KEY,
+    langfuseSecretKey: process.env.LANGFUSE_SECRET_KEY,
+  };
+  const { accessToken, langfusePublicKey, langfuseSecretKey, runtimeToken } = credentials;
+  const valid = value => typeof value === 'string' && value.length > 0 && value.length <= 16_384 && !/[\x00-\x20\x7f]/.test(value);
+  if (stopped || ![accessToken, langfusePublicKey, langfuseSecretKey].every(valid))
+    throw new Error('Private runtime credentials missing');
+  langfuseAuth = 'Basic ' + Buffer.from(langfusePublicKey + ':' + langfuseSecretKey).toString('base64');
+  bridge = process.env.PI_CONTROL_URL ? createRootBridge({ url: process.env.PI_CONTROL_URL, token: runtimeToken }) : null;
+  const initial = bridge ? await bridge.context() : null;
+  if (bridge && !initial) { stop(); throw new Error('Owner paused the runtime'); }
   const base = 'https://api.openai.com/v1';
   const res = await fetch(base + '/models', {
     headers: { Authorization: 'Bearer ' + accessToken },
@@ -107,8 +119,6 @@ try {
     .map(id => models.getModel('openai', id)).find(x => x && hasApi(x, 'openai-responses'));
   if (!model || stopped) throw new Error('No eligible small conversational model');
   const [system, goalSelection, invocation] = await Promise.all(promptNames.map(loadPrompt));
-  const initial = bridge ? await bridge.context() : null;
-  if (bridge && !initial) { stop(); throw new Error('Owner paused the runtime'); }
   let currentGoal = initial?.goals?.[0] ?? null;
   const goalTool = {
     name: 'goal_set', label: 'Choose a goal', description: 'Set one public, achievable goal for the sandbox.',
