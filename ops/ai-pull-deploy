@@ -9,36 +9,51 @@ site=/opt/ai/.local/https/acme/ai-poc
 origin=https://github.com/akniles/ai.git
 exec 9>"$state/deploy.lock"
 flock -n 9 || exit 0
-[[ -d $site && ! -L $site && -d $site/releases && ! -L $site/releases ]]
+[[ -d $site && ! -L $site ]]
 [[ -d $repo ]] || git init --bare "$repo"
 g() { git --git-dir="$repo" -c core.hooksPath=/dev/null -c protocol.allow=never -c protocol.https.allow=always "$@"; }
 g -c http.followRedirects=false fetch --no-tags --depth=1 "$origin" +refs/heads/main:refs/heads/candidate
 sha=$(g rev-parse --verify 'refs/heads/candidate^{commit}')
 [[ $sha =~ ^[a-f0-9]{40}$ ]]
-if [[ $(readlink "$site/current" || true) == "releases/$sha" ]]; then exit 0; fi
-release=$site/releases/$sha
-if [[ ! -e $release ]]; then
-  tmp=$(mktemp -d "$site/releases/.candidate.XXXXXXXX")
-  trap 'if [[ -n ${tmp:-} ]]; then rm -f -- "$tmp"/{index.html,app.js,style.css,preview.json,health.json}; rmdir -- "$tmp"; fi; if [[ -n ${linkstage:-} ]]; then rm -f -- "$linkstage/current"; rmdir -- "$linkstage"; fi' EXIT
-  for asset in index.html app.js style.css preview.json; do
-    f=web/$asset
-    entry=$(g ls-tree "$sha" -- "$f")
-    [[ $entry == "100644 blob "* || $entry == "100755 blob "* ]]
-    size=$(g cat-file -s "$sha:$f")
-    [[ $size -gt 0 && $size -le 1048576 ]]
-    g cat-file blob "$sha:$f" > "$tmp/$asset"
-    chmod 0644 "$tmp/$asset"
-  done
-  printf '{"ok":true,"commit":"%s"}\n' "$sha" > "$tmp/health.json"
-  chmod 0644 "$tmp/health.json"
-  chmod 0755 "$tmp"
-  mv -T -- "$tmp" "$release"
-  tmp=
+
+# Each release is prepared in full before changing the one symlink readers use.
+# Git supplies data files only, never tools or server configuration.
+publish() (
+  local root=$1 prefix=$2 revision=$3 label=$4
+  shift 4
+  local release=$root/releases/$revision tmp= linkstage= asset file entry size
+  [[ $revision =~ ^[a-f0-9]{40}$ ]]
+  [[ -d $root && ! -L $root && -d $root/releases && ! -L $root/releases ]]
+  if [[ $(readlink "$root/current" || true) == "releases/$revision" ]]; then exit 0; fi
+  trap 'if [[ -n $tmp ]]; then rm -f -- "$tmp"/{index.html,app.js,style.css,preview.json,health.json,activity.js,chat.css,chat.js,trace.js,ui.js}; rmdir -- "$tmp"; fi; if [[ -n $linkstage ]]; then rm -f -- "$linkstage/current"; rmdir -- "$linkstage"; fi' EXIT
+  if [[ ! -e $release ]]; then
+    tmp=$(mktemp -d "$root/releases/.candidate.XXXXXXXX")
+    for asset in "$@"; do
+      file=$prefix/$asset
+      entry=$(g ls-tree "$sha" -- "$file")
+      [[ $entry == "100644 blob "* || $entry == "100755 blob "* ]]
+      size=$(g cat-file -s "$sha:$file")
+      [[ $size -gt 0 && $size -le 1048576 ]]
+      g cat-file blob "$sha:$file" > "$tmp/$asset"
+      chmod 0644 "$tmp/$asset"
+    done
+    printf '{"ok":true,"commit":"%s"}\n' "$sha" > "$tmp/health.json"
+    chmod 0644 "$tmp/health.json"
+    chmod 0755 "$tmp"
+    mv -T -- "$tmp" "$release"
+    tmp=
+  fi
+  [[ -d $release && ! -L $release ]]
+  for file in "$@" health.json; do [[ -f $release/$file && ! -L $release/$file ]]; done
+  linkstage=$(mktemp -d "$root/.pointer.XXXXXXXX")
+  ln -s "releases/$revision" "$linkstage/current"
+  mv -Tf -- "$linkstage/current" "$root/current"
+  printf 'Serving %s commit %s (%s)\n' "$label" "$sha" "$revision"
+)
+
+publish "$site" web "$sha" "static preview" index.html app.js style.css preview.json
+# Bootstrap the bind mount on the server once; leave live unchanged for old commits.
+if [[ -d $site/live ]] && live_tree=$(g rev-parse --verify "$sha:live-web" 2>/dev/null); then
+  [[ $(g cat-file -t "$live_tree") == tree ]]
+  publish "$site/live" live-web "$live_tree" "live frontend" index.html app.js style.css activity.js chat.js ui.js chat.css trace.js
 fi
-[[ -d $release && ! -L $release ]]
-for f in index.html app.js style.css preview.json health.json; do [[ -f $release/$f && ! -L $release/$f ]]; done
-linkstage=$(mktemp -d "$site/.pointer.XXXXXXXX")
-trap 'rm -f -- "$linkstage/current"; rmdir -- "$linkstage"' EXIT
-ln -s "releases/$sha" "$linkstage/current"
-mv -Tf -- "$linkstage/current" "$site/current"
-printf 'Serving static preview commit %s\n' "$sha"
