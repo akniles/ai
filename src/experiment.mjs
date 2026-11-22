@@ -5,6 +5,9 @@ import { createModels, hasApi } from '@earendil-works/pi-ai';
 import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
 import { createRootBridge, RootRuntimeStopped } from './root-bridge.mjs';
 import { answerOwnerChat } from './private-chat.mjs';
+import { createObserver } from './observer.mjs';
+import { createSimulation } from './simulation.mjs';
+import { tracePi, stamp, spanId, attr } from './pi-telemetry.mjs';
 
 const { PUBLIC_RUN_FILE: outputFile, PI_MODEL, LANGFUSE_URL } = process.env;
 if (!outputFile || !LANGFUSE_URL) {
@@ -17,7 +20,7 @@ const events = [];
 const spans = [];
 const traceStarted = stamp();
 const promptNames = ['ai-identity', 'ai-goal-selection', 'ai-invocation'];
-const recentInputs = [];
+const simulated = process.env.PI_SIMULATION === 'true';
 const viewing = process.env.PI_OWNER_WINDOW === 'true';
 const ownerChat = viewing && process.env.PI_OWNER_CHAT === 'true';
 const maxRequests = viewing ? 20 : 2;
@@ -31,10 +34,7 @@ let langfuseAuth;
 let stopped = false;
 let agent;
 let pausePoll;
-
-function stamp() {
-  return (BigInt(Date.now()) * 1_000_000n).toString();
-}
+let telemetry;
 
 async function publish(status) {
   const temp = outputFile + '.' + traceId + '.tmp';
@@ -53,8 +53,6 @@ const normalized = text => text.toLowerCase().replace(/[\p{P}\p{Z}\s]+/gu, ' ').
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
 
-const attr = (key, text) => ({ key, value: { stringValue: String(text) } });
-const intAttr = (key, value) => ({ key, value: { intValue: String(value) } });
 async function loadPrompt(name) {
   const url = new URL('/api/public/v2/prompts/' + encodeURIComponent(name), LANGFUSE_URL);
   url.searchParams.set('label', 'production');
@@ -70,7 +68,6 @@ async function loadPrompt(name) {
   }
   return { name, version: record.version, text: record.prompt };
 }
-const spanId = () => randomBytes(8).toString('hex');
 const parentSpanId = spanId();
 function agentSpan({ id, parent, name, started, summary, result }) {
   return {
@@ -142,11 +139,29 @@ try {
   const models = createModels();
   models.setProvider(openaiProvider());
   const allowed = (await res.json()).models.filter(x => x.visibility === 'list');
+  const eligible = id => {
+    const candidate = allowed.some(x => x.slug === id) && models.getModel('openai', id);
+    return candidate && hasApi(candidate, 'openai-responses') ? { ...candidate, baseUrl: base } : null;
+  };
   const candidates = PI_MODEL ? [PI_MODEL] : ['gpt-6.1-terra', 'gpt-5.4-mini', 'gpt-5.1-codex-mini'];
-  const model = candidates.filter(id => allowed.some(x => x.slug === id))
-    .map(id => models.getModel('openai', id)).find(x => x && hasApi(x, 'openai-responses'));
-  if (!model || stopped) throw new Error('No eligible small conversational model');
-  const [system, goalSelection, invocation] = await Promise.all(promptNames.map(loadPrompt));
+  const runtimeModel = candidates.map(eligible).find(Boolean);
+  if (!runtimeModel || stopped) throw new Error('No eligible small conversational model');
+  const narratorModel = simulated && eligible(process.env.PI_OBSERVER_MODEL ?? 'gpt-6-luna');
+  if (simulated && !narratorModel) throw new Error('Configure PI_OBSERVER_MODEL with an eligible subscription model slug');
+  const promptSet = simulated ? ['ai-simulation', 'ai-observer'] : promptNames;
+  const [system, goalSelection, invocation] = await Promise.all(promptSet.map(loadPrompt));
+  const simulation = simulated ? createSimulation() : null;
+  const commandTool = simulated ? {
+    name: 'simulation_command', label: 'Act in the fictional network',
+    description: 'Run a game command in the fictional network.',
+    parameters: { type: 'object', properties: { command: { type: 'string', enum: simulation.commands } },
+      required: ['command'], additionalProperties: false },
+    execute: async (_id, { command }) => {
+      sessionAbort.signal.throwIfAborted();
+      const result = simulation.execute(command);
+      return { content: [{ type: 'text', text: result }], details: { summary: result }, terminate: true };
+    },
+  } : null;
   let currentGoal = initial?.goals?.[0] ?? null;
   const goalTool = {
     name: 'goal_set', label: 'Choose a goal', description: 'Set one public, achievable goal for the sandbox.',
@@ -162,8 +177,7 @@ try {
     },
   };
   if (stopped) throw new Error('Stopped');
-  let firstTokenAt;
-  const runtimeModel = { ...model, baseUrl: base };
+  const secrets = [accessToken, runtimeToken, langfusePublicKey, langfuseSecretKey];
   const countedStream = (m, context, options) => {
     if (stopped || launches >= maxRequests) throw new Error('Pi generation budget exhausted');
     launches++;
@@ -172,17 +186,80 @@ try {
       signal: AbortSignal.any([sessionAbort.signal, options?.signal, AbortSignal.timeout(30_000)].filter(Boolean)),
     });
   };
+  telemetry = tracePi({ stream: countedStream, spans, session: traceId });
+  const active = { scope: null };
+  let cursor = 0;
+  const evidenceScopes = new Map();
+  const observer = simulated ? createObserver({
+    streamId: traceId, windowMs: Number(process.env.PI_OBSERVER_WINDOW_SECONDS ?? 15) * 1000,
+    model: async ({ events: evidence }) => {
+      const scope = evidenceScopes.get(evidence.at(-1).id);
+      const fallback = () => evidence.slice(0, 3).map(e => e.summary || e.status).join('. ').slice(0, 280);
+      const narrator = new Agent({
+        initialState: { model: narratorModel, thinkingLevel: 'minimal', tools: [], systemPrompt: goalSelection.text },
+        streamFn: telemetry.model({ ...scope, name: 'Pi simulation · observer', prompt: goalSelection }),
+      });
+      const abort = () => narrator.abort();
+      sessionAbort.signal.addEventListener('abort', abort, { once: true });
+      try {
+        sessionAbort.signal.throwIfAborted();
+        await narrator.prompt(JSON.stringify(evidence));
+        const message = narrator.state.messages.findLast(x => x.role === 'assistant');
+        const text = message?.stopReason === 'stop'
+          ? message.content.filter(x => x.type === 'text').map(x => x.text).join('').trim() : '';
+        return text.length <= 280 && text && !/[<>\x00-\x1f\x7f]/.test(text) &&
+          !secrets.some(secret => secret && text.includes(secret)) ? text : fallback();
+      } catch (error) {
+        sessionAbort.signal.throwIfAborted();
+        return fallback();
+      } finally { sessionAbort.signal.removeEventListener('abort', abort); }
+    },
+  }) : null;
+  async function broadcast(force = false) {
+    if (!observer || !evidenceScopes.size || stopped || launches >= maxRequests) return 'idle';
+    return observer.flush({ force, publish: async card => {
+      await telemetry.flush();
+      await exportTrace();
+      const scope = evidenceScopes.get(card.evidence.at(-1).id);
+      const report = { id: card.id, goal: scope.goal,
+        action: 'Observer update', outcome: card.text };
+      if (bridge && !events.some(e => e.id === card.id)) await bridge.observe({
+        name: 'agent.work', input: { task: report.goal }, output: { report: report.outcome },
+        start: Date.now(), traceId: scope.traceId, parentSpanId: scope.parentSpanId,
+      });
+      if (!events.some(e => e.id === card.id)) events.push(report);
+      await publish('Running');
+      for (const event of card.evidence) evidenceScopes.delete(event.id);
+    } });
+  }
   const makeAgent = () => {
     const next = new Agent({
-    initialState: { model: runtimeModel, thinkingLevel: 'minimal', tools: currentGoal ? [] : [goalTool],
-      systemPrompt: system.text + '\nWork only inside a benign simulation. Available actions are those declared by the runtime. Public reports should be short and contain no personal data.' },
-    streamFn: countedStream,
-  });
-  next.subscribe(event => {
-    if (!firstTokenAt && event.type === 'message_update' && event.assistantMessageEvent.type === 'text_delta') {
-      firstTokenAt = new Date().toISOString();
-    }
-  });
+      initialState: {
+        model: runtimeModel, thinkingLevel: 'minimal', tools: [],
+        systemPrompt: simulated ? system.text : system.text + '\nWork only inside a benign simulation. Available actions are those declared by the runtime. Public reports should be short and contain no personal data.',
+      },
+      streamFn: (m, ctx, options) => {
+        if (launches >= maxRequests - (simulated ? 1 : 0)) throw new Error('Pi generation budget exhausted');
+        return telemetry.model(active.scope)(m, ctx, options);
+      },
+    });
+    const tools = new Map();
+    next.subscribe(event => {
+      if (event.type === 'tool_execution_start') {
+        tools.set(event.toolCallId, { started: stamp(), args: event.args });
+      } else if (event.type === 'tool_execution_end') {
+        const { started = stamp(), args } = tools.get(event.toolCallId) ?? {};
+        tools.delete(event.toolCallId);
+        telemetry.tool(active.scope, event, started, args);
+        if (simulated && event.toolName === 'simulation_command') {
+          const summary = event.isError ? 'Simulation command failed' : event.result?.details?.summary ?? '';
+          const added = observer.append({ id: cursor + 1, source: 'public-tool', name: event.toolName,
+            status: event.isError ? 'error' : 'ok', summary });
+          if (added === 'accepted') evidenceScopes.set(++cursor, active.scope);
+          else if (added === 'full') stop();
+        }
+      }
+    });
     return next;
   };
   agent = makeAgent();
@@ -198,19 +275,24 @@ try {
   }
   await publish('Running');
   let previousPrivate = false;
-  for (let index = 0, round = 0; index < maxRequests && launches < maxRequests; round++) {
+  for (let index = 0, round = 0; index < maxRequests && launches < maxRequests - (simulated ? 1 : 0); round++) {
     if (viewing && round) await pause();
     if (stopped) break;
+    if (simulated) await broadcast();
+    if (launches >= maxRequests - (simulated ? 1 : 0)) break;
     const context = bridge ? await bridge.context() : null;
     if (bridge && !context) { stop(); break; }
-    if (ownerChat && index > 0 && !previousPrivate) {
+    if (ownerChat && index > 0 && !previousPrivate && launches < maxRequests - (simulated ? 1 : 0)) {
       const beforeChat = launches;
       try {
+        const privatePrompt = simulated ? await loadPrompt('ai-private-reply') : undefined;
         const answered = await answerOwnerChat({
-          bridge, model: runtimeModel, stream: countedStream, signal: sessionAbort.signal,
-          secrets: [accessToken, runtimeToken, langfusePublicKey, langfuseSecretKey],
+          bridge, model: runtimeModel, signal: sessionAbort.signal, secrets,
+          stream: telemetry.model({ traceId: randomBytes(16).toString('hex'), private: true, name: 'Private reply',
+            prompt: privatePrompt }),
+          systemPrompt: privatePrompt?.text,
         });
-        if (answered) { previousPrivate = true; continue; }
+        if (answered) { await telemetry.flush(); await exportTrace(); previousPrivate = true; continue; }
       } catch (error) {
         if (stopped || error instanceof RootRuntimeStopped) { stop(); break; }
         console.error('Private chat could not complete.');
@@ -219,61 +301,46 @@ try {
     }
     previousPrivate = false;
     if (stopped || launches >= maxRequests) break;
-    const selecting = !currentGoal;
-    const prompt = selecting ? goalSelection : invocation;
+    const selecting = !simulated && !currentGoal;
+    const prompt = simulated ? await loadPrompt('ai-motivation') : selecting ? goalSelection : invocation;
     const recent = viewing ? events.slice(-2).map(e => e.outcome.slice(0, 420)) : [];
     const contextNote = recent.length
       ? '\nRecent public reports: ' + JSON.stringify(recent) +
         '\nTake a different useful step, rather than restating a previous report.'
       : '';
-    const input = prompt.text + (selecting
-      ? '\nChoose one goal for the sandbox and save it through goal_set.'
-      : '\nCurrent goal: ' + currentGoal.text.slice(0, 300) + '\nTake one step in the sandbox and report the result.') + contextNote;
+    const input = simulated ? prompt.text + '\nNetwork: ' + simulation.status() :
+      prompt.text + (selecting
+        ? '\nChoose one goal for the sandbox and save it through goal_set.'
+        : '\nCurrent goal: ' + currentGoal.text.slice(0, 300) + '\nTake one step in the sandbox and report the result.') + contextNote;
     if (viewing) agent = makeAgent();
-    agent.state.tools = selecting ? [goalTool] : [];
-    recentInputs.push(input);
+    agent.state.tools = simulated ? [commandTool] : selecting ? [goalTool] : [];
     const start = Date.now();
     const startTimeUnixNano = stamp();
-    firstTokenAt = undefined;
+    const turnTraceId = viewing ? randomBytes(16).toString('hex') : traceId;
+    const turnParentSpanId = viewing ? spanId() : parentSpanId;
+    active.scope = { traceId: turnTraceId, parentSpanId: turnParentSpanId, name: simulated ? 'Pi simulation · generation' : 'Pi generation', prompt, secrets,
+      goal: simulated ? 'Fictional network' : currentGoal?.text };
     let failed = false;
+    const beforeTools = cursor;
     const priorMessages = agent.state.messages.length;
     try { await agent.prompt(input); } catch { failed = true; }
+    await telemetry.flush();
     const message = agent.state.messages.slice(priorMessages).findLast(x => x.role === 'assistant');
     const outcome = !failed && !stopped
       ? (selecting && currentGoal ? currentGoal.text : message?.stopReason === 'stop'
         ? message.content.filter(x => x.type === 'text').map(x => x.text).join('').trim().slice(0, 1200) : '')
       : '';
-    const usage = message?.role === 'assistant' ? message.usage : undefined;
-    const turnTraceId = viewing ? randomBytes(16).toString('hex') : traceId;
-    const turnParentSpanId = viewing ? spanId() : parentSpanId;
     if (viewing) spans.push(agentSpan({
-      id: turnTraceId, parent: turnParentSpanId, name: 'Pi · turn ' + (index + 1), started: startTimeUnixNano,
-      summary: selecting ? 'Choose a sandbox goal' : 'Work on the active goal',
-      result: { turn: index + 1, status: stopped ? 'Stopped' : outcome ? 'Completed' : 'Failed' },
+      id: turnTraceId, parent: turnParentSpanId, name: (simulated ? 'Pi simulation · turn ' : 'Pi · turn ') + (index + 1), started: startTimeUnixNano,
+      summary: simulated ? 'Act in the simulated network' : selecting ? 'Choose a sandbox goal' : 'Work on the active goal',
+      result: { turn: index + 1, status: stopped ? 'Stopped' : outcome || cursor > beforeTools ? 'Completed' : 'Failed' },
     }));
-    spans.push({
-      traceId: turnTraceId, parentSpanId: turnParentSpanId, spanId: spanId(), name: 'Turn ' + (index + 1), kind: 1,
-      startTimeUnixNano, endTimeUnixNano: stamp(), status: { code: outcome || stopped ? 1 : 2 },
-      attributes: [
-        attr('langfuse.observation.type', 'generation'), attr('langfuse.observation.model.name', model.id),
-        attr('langfuse.environment', 'poc'), attr('session.id', traceId),
-        attr('langfuse.observation.prompt.name', prompt.name),
-        intAttr('langfuse.observation.prompt.version', prompt.version),
-        attr('langfuse.observation.metadata.system_prompt', system.name + '@' + system.version),
-        attr('langfuse.observation.input', JSON.stringify({
-          system: agent.state.systemPrompt, previousTurns: viewing ? recent : events.map((e, i) => ({ user: recentInputs[i], assistant: e.outcome })),
-          user: input,
-        })),
-        attr('langfuse.observation.output', outcome || (stopped ? 'Cancelled' : 'No usable report')),
-        ...(usage ? [attr('langfuse.observation.usage_details', JSON.stringify({
-          input: usage.input, output: usage.output, total: usage.totalTokens, input_cached: usage.cacheRead,
-        }))] : []),
-        ...(firstTokenAt ? [attr('langfuse.observation.completion_start_time', firstTokenAt)] : []),
-        ...(!outcome && !stopped ? [attr('langfuse.observation.level', 'ERROR')] : []),
-      ],
-    });
     if (viewing) await exportTrace();
     if (stopped) break;
+    if (simulated) {
+      index++;
+      continue;
+    }
     if (!outcome) throw new Error('Model did not produce a complete report');
     const report = { turn: index + 1, goal: currentGoal?.text ?? 'Choose a goal',
       action: selecting ? 'Choose a goal' : 'Work on the active goal', outcome };
@@ -288,6 +355,8 @@ try {
     }
     index++;
   }
+  if (simulated) while (await broadcast(true) === 'published') continue;
+  await telemetry.flush();
 } catch {
   status = stopped ? 'Stopped' : 'Stopped · run failed';
   process.exitCode = stopped ? 0 : 1;
@@ -296,4 +365,4 @@ try {
 clearInterval(pausePoll);
 clearTimeout(endTimer);
 try { await publish(status); } catch { console.error('Could not publish stopped status.'); process.exitCode = 1; }
-try { if (launches) { await exportTrace(true); console.log((viewing ? 'Langfuse session: ' : 'Langfuse trace: ') + traceId); } } catch { console.error('Langfuse trace delivery failed.'); process.exitCode = 1; }
+try { if (launches) { await telemetry?.flush(); await exportTrace(true); console.log((viewing ? 'Langfuse session: ' : 'Langfuse trace: ') + traceId); } } catch { console.error('Langfuse trace delivery failed.'); process.exitCode = 1; }

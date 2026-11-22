@@ -6,6 +6,7 @@ import { observationName } from "./trace.js";
 export function activityItems(data) {
   const groups = new Map();
   for (const o of data.observations ?? []) {
+    if (o.name === 'Private reply') continue;
     const group = groups.get(o.traceId) ?? {
       id: o.traceId,
       time: o.start,
@@ -20,7 +21,10 @@ export function activityItems(data) {
   const events = (data.events ?? []).filter(
     (e) => !groups.size || !["goal", "note"].includes(e.category),
   );
-  const traces = [...groups.values()];
+  const traces = [...groups.values()].filter(({ observations }) =>
+    !observations.some(o => o.name.startsWith('Pi simulation · ')) ||
+    observations.some(o => o.name === 'agent.work' && o.preview?.report),
+  );
   return [...events, ...traces].sort(
     (a, b) => new Date(b.time) - new Date(a.time),
   );
