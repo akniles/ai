@@ -21,9 +21,3 @@ export const clock = (time) =>
     minute: "2-digit",
     hour12: false,
   });
-
-export const goalLabels = {
-  active: "Current",
-  done: "Completed",
-  abandoned: "Cancelled",
-};

@@ -1,96 +1,64 @@
-import { $, el, date } from "./ui.js";
-let chatSnapshot = "",
-  chatReady = false,
-  chatBlocked = false,
-  chatSending = false,
-  pendingMessage = null;
+import { $ } from "./ui.js";
 
-export function startChat() {
-  async function refreshChat() {
-    try {
-      const r = await fetch("/api/chat", { cache: "no-store" });
-      if (!r.ok) throw new Error("Chat reconnecting…");
-      const chat = await r.json();
-      chatReady = true;
-      chatBlocked = chat.blocked;
-      const next = JSON.stringify(chat);
-      if (next !== chatSnapshot) {
-        chatSnapshot = next;
-        const box = $("chat-messages"),
-          atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-        box.replaceChildren();
-        box.hidden = !chat.messages.length;
-        for (const message of chat.messages) {
-          const bubble = el(
-            "article",
-            `chat-message ${message.direction === "out" ? "from-agent" : "from-you"}`,
-          );
-          bubble.append(
-            el("p", "chat-author", message.direction === "out" ? "ai" : "You"),
-            el("p", "chat-body", message.body),
-            el(
-              "p",
-              "chat-time",
-              `${date(message.time)}${message.direction === "in" ? (message.read ? " · Read" : " · Delivered") : ""}`,
-            ),
-          );
-          box.append(bubble);
-        }
-        if (atBottom || chatSending) box.scrollTop = box.scrollHeight;
-      }
-      if (!chatSending)
-        $("chat-status").textContent = chat.blocked
-          ? "Chat blocked"
-          : chat.muted
-            ? "Notifications muted"
-            : "";
-    } catch (error) {
-      if (!chatSending) $("chat-status").textContent = error.message;
-    }
-    $("chat-send").disabled = !chatReady || chatBlocked || chatSending;
+export function setupSteering() {
+  const field = $("chat-input");
+  const form = $("chat-form");
+  const status = $("chat-status");
+  let sending = false;
+  let pending;
+  let ready = false;
+
+  function show(message) {
+    status.textContent = message;
+    status.hidden = !message;
   }
-  $("chat-input").addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" || event.shiftKey || event.isComposing || event.keyCode === 229) return;
-    if (!event.currentTarget.value.trim()) return;
-    event.preventDefault();
-    if (!event.repeat && !$("chat-send").disabled) $("chat-form").requestSubmit();
+
+  field.addEventListener("input", () => {
+    if (!sending) show("");
   });
-  $("chat-form").addEventListener("submit", async (event) => {
+  field.addEventListener("keydown", event => {
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing || event.keyCode === 229) return;
+    if (!field.value.trim()) return;
     event.preventDefault();
-    const body = $("chat-input").value.trim();
-    if (!body || !chatReady || chatBlocked || chatSending) return;
-    if (!pendingMessage || pendingMessage.body !== body)
-      pendingMessage = { id: crypto.randomUUID(), body };
-    chatSending = true;
-    $("chat-send").disabled = true;
-    $("chat-status").textContent = "Sending…";
+    if (!event.repeat && !sending) form.requestSubmit();
+  });
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    const draft = field.value;
+    const body = draft.trim();
+    if (!body || sending) return;
+    if (!pending || pending.body !== body) pending = { id: crypto.randomUUID(), body };
+    sending = true;
+    show("Sending…");
     try {
-      const r = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(pendingMessage),
-        }),
-        result = await r.json();
-      if (!r.ok)
-        throw new Error(
-          result.reason === "blocked"
-            ? "The agent has blocked this chat."
-            : (result.error ?? "Could not send. Please retry."),
-        );
-      $("chat-input").value = "";
-      pendingMessage = null;
-      await refreshChat();
-      $("chat-status").textContent = "Delivered";
+      if (!ready) {
+        const session = await fetch("/api/chat", {
+          cache: "no-store",
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!session.ok) throw new Error("Could not connect. Try again.");
+        ready = true;
+      }
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(pending),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) {
+        if ([401, 403].includes(response.status)) {
+          ready = false;
+          throw new Error("This browser cannot send messages.");
+        }
+        throw new Error("Could not send. Try again.");
+      }
+      if (field.value === draft) field.value = "";
+      pending = null;
+      show("Sent");
     } catch (error) {
-      $("chat-status").textContent = error.message;
+      show(error.message);
     } finally {
-      chatSending = false;
-      $("chat-send").disabled = !chatReady || chatBlocked;
+      sending = false;
     }
   });
-
-  refreshChat();
-  setInterval(() => {
-    if (!document.hidden && !chatSending) refreshChat();
-  }, 5000);
 }

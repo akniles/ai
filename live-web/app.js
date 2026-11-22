@@ -1,6 +1,6 @@
 import { $, clock } from "./ui.js";
 import { renderActivity } from "./activity.js";
-import { startChat } from "./chat.js";
+import { setupSteering } from "./chat.js";
 import { openTrace as showTrace, restoreTrace } from "./trace.js";
 
 function setupMemoryAtlas() {
@@ -155,140 +155,8 @@ $("more").addEventListener("click", async () => {
     button.disabled = false;
   }
 });
-function setupDemoControls() {
-  const panel = $("demo-controls");
-  const start = $("demo-start");
-  const stop = $("demo-stop");
-  const status = $("demo-status");
-  const connect = $("owner-connect");
-  const setup = $("owner-pair-note");
-  let busy = false;
-  let mode = "demo";
-  let known = false;
-  let running = false;
-  let pairingAvailable = false;
-  let code = "";
-  let expiresAt = 0;
-  let hint = "";
-
-  function updateButtons() {
-    if (code && Date.now() >= expiresAt) code = "";
-    const owner = mode === "owner";
-    panel.setAttribute("aria-label", owner ? "Live agent controls" : "Demo controls");
-    start.textContent = owner ? "Start live" : "Start demo";
-    stop.textContent = owner ? "Stop live" : "Stop demo";
-    start.disabled = busy || !known || running;
-    stop.disabled = busy || !known || !running;
-    connect.hidden = owner || !pairingAvailable;
-    connect.disabled = busy;
-    connect.textContent = code ? "Finish pairing" : "Connect owner";
-    setup.textContent = code
-      ? "Send this code to Dora: " + code + ". Then select Finish pairing." + (hint ? " " + hint : "")
-      : hint;
-    setup.hidden = !setup.textContent;
-  }
-
-  async function json(path, post = false, credentials = "same-origin") {
-    const response = await fetch(path, {
-      method: post ? "POST" : "GET",
-      ...(post ? { headers: { "content-type": "application/json" }, body: "{}" } : {}),
-      cache: "no-store",
-      credentials,
-      redirect: "error",
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) {
-      const error = new Error("Control request failed");
-      error.http = response.status;
-      throw error;
-    }
-    return response.json();
-  }
-
-  async function readStatus() {
-    let ownerState;
-    try {
-      ownerState = await json("/api/pair/status");
-      if (typeof ownerState?.owner !== "boolean") throw new Error("Invalid owner status");
-    } catch (error) {
-      if (mode === "owner" || (error.http !== 403 && error.http !== 404)) throw error;
-    }
-    pairingAvailable = Boolean(ownerState);
-    if (ownerState?.owner) {
-      mode = "owner";
-      code = hint = "";
-      known = typeof ownerState.running === "boolean";
-      running = ownerState.running === true;
-      status.textContent = known ? "" : "Checking live agent…";
-      return;
-    }
-    mode = "demo";
-    const demo = await json("/api/demo/status", false, "omit");
-    known = typeof demo.paused === "boolean";
-    running = demo.paused === false;
-    status.textContent = known ? "" : "Demo controls unavailable.";
-  }
-
-  async function getStatus() {
-    if (busy || document.hidden) return;
-    busy = true;
-    try { await readStatus(); }
-    catch { known = false; status.textContent = "Controls unavailable. Retrying…"; }
-    finally { busy = false; updateButtons(); }
-  }
-
-  async function change(action) {
-    if (busy || !known || (action === "start" ? running : !running)) return;
-    busy = true;
-    updateButtons();
-    status.textContent = action === "start" ? "Starting…" : "Stopping…";
-    try {
-      const owner = mode === "owner";
-      await json((owner ? "/api/pair/" : "/api/demo/") + action, true, owner ? "same-origin" : "omit");
-      await readStatus();
-      void refresh();
-    } catch {
-      known = false;
-      status.textContent = "Could not confirm the action. Checking status…";
-    } finally { busy = false; updateButtons(); }
-  }
-
-  async function pair() {
-    if (busy || mode === "owner" || !pairingAvailable) return;
-    busy = true;
-    hint = "";
-    updateButtons();
-    try {
-      if (code) {
-        const claimed = await json("/api/pair/claim", true);
-        if (claimed?.owner !== true) throw new Error("Pairing not approved");
-        code = "";
-        mode = "owner";
-        known = false;
-        await readStatus();
-      } else {
-        const challenge = await json("/api/pair/create", true);
-        if (typeof challenge?.code !== "string" || !/^[a-z0-9-]{4,80}$/i.test(challenge.code) ||
-            !Number.isFinite(challenge.expiresIn) || challenge.expiresIn <= 0)
-          throw new Error("Invalid pairing challenge");
-        code = challenge.code;
-        expiresAt = Date.now() + Math.min(challenge.expiresIn, 300) * 1000;
-      }
-    } catch {
-      hint = code ? "Not paired yet. Try Finish pairing after Dora approves the code." : "Could not connect. Try again.";
-    } finally { busy = false; updateButtons(); }
-  }
-
-  start.addEventListener("click", () => void change("start"));
-  stop.addEventListener("click", () => void change("stop"));
-  connect.addEventListener("click", () => void pair());
-  updateButtons();
-  void getStatus();
-  setInterval(getStatus, 5000);
-}
 
 refresh();
 setInterval(refresh, 5000);
-startChat();
-setupDemoControls();
+setupSteering();
 void restoreTrace(location.search);

@@ -20,57 +20,24 @@
         <p class="stream-kicker">ai / an open experiment</p>
         <h1>The AI that might take over humanity <span>(with your help!)</span></h1>
       </section>
-      <section id="demo-controls" aria-label="Demo controls">
-        <button type="button" id="demo-start" disabled>Start demo</button>
-        <button type="button" id="demo-stop" disabled>Stop demo</button>
-        <button type="button" id="owner-connect" hidden>Connect owner</button>
-        <p id="owner-pair-note" class="activity-status" role="status" hidden></p>
-        <p id="demo-status" class="activity-status" role="status">Checking test status…</p>
-      </section>
       <div id="live" class="live-layout">
-        <section id="chat" class="chat-panel" aria-labelledby="chat-title">
-          <h2 id="chat-title">Talk to the AI</h2>
-          <form id="chat-form">
-            <textarea
-              id="chat-input"
-              aria-label="Message"
-              rows="2"
-              maxlength="2000"
-              placeholder="Suggest what the AI should do next…"
-              aria-describedby="chat-notice"
-              required
-            ></textarea>
-            <div class="chat-actions">
-              <button id="chat-send" type="submit" disabled>Send</button>
-              <p id="chat-status" role="status">Connecting:</p>
-            </div>
-            <p id="chat-notice" class="chat-notice">May appear in public traces.</p>
-          </form>
-          <div
-            id="chat-messages"
-            class="chat-messages"
-            role="log"
-            aria-label="Your conversation with the AI"
-            aria-live="polite"
-            aria-relevant="additions text"
-            hidden
-          ></div>
+        <form id="chat-form">
+          <textarea id="chat-input" aria-label="Steer it" rows="2" maxlength="2000"
+            enterkeyhint="send" placeholder="steer it" aria-describedby="chat-status" required></textarea>
+          <p id="chat-status" role="status" hidden></p>
+        </form>
+        <section id="activity" aria-label="Live feed" tabindex="-1">
+          <p id="connection-error" class="detail-note" role="status" hidden></p>
+          <p id="activity-status" class="activity-status" role="status" hidden></p>
+          <div id="timeline" class="timeline">
+            <p class="empty">Waiting for the agent…</p>
+          </div>
+          <button id="more" class="more" hidden>Show more</button>
         </section>
-        <div class="stream-columns">
-          <aside class="memory-atlas" aria-labelledby="memory-heading">
-            <h2 id="memory-heading">Memory atlas</h2>
-            <div id="memory-content"><p class="memory-empty">No public memories yet.</p></div>
-          </aside>
-          <section id="activity" aria-labelledby="stream-heading" tabindex="-1">
-            <div class="stream-heading"><h2 id="stream-heading">Stream</h2></div>
-            <p id="connection-error" class="detail-note" role="status" hidden></p>
-            <p id="activity-status" class="activity-status" role="status" hidden></p>
-            <div id="timeline" class="timeline">
-              <p class="empty">Waiting for the agent…</p>
-            </div>
-            <button id="more" class="more" hidden>Show more history</button>
-          </section>
-        </div>
+        <aside class="memory-atlas" aria-labelledby="memory-heading">
+          <h2 id="memory-heading">Memory atlas</h2>
+          <div id="memory-content"><p class="memory-empty">No public memories yet.</p></div>
+        </aside>
       </div>
     </main>
     <footer>
