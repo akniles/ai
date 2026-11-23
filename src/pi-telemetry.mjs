@@ -60,7 +60,7 @@ export function tracePi({ stream, spans, session }) {
       };
     },
     tool(scope, event, started, args) {
-      emit({ ...scope, name: event.toolName === 'simulation_command' ? 'Pi simulation · command' : event.toolName, kind: 'tool', started,
+      emit({ ...scope, name: event.toolName === 'market_step' ? 'Pi simulation · command' : event.toolName, kind: 'tool', started,
         input: redact({ id: event.toolCallId, args }, scope.secrets ?? []),
         output: redact({ id: event.toolCallId, content: visible(event.result?.content) }, scope.secrets ?? []),
         failed: !!event.isError });

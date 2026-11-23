@@ -1,0 +1,1 @@
+Review the market dashboard, then make one move. Publish a new price, latency and availability offer or advance the current offer by one period to measure adoption and margin. Use the actual result to decide when to change course.

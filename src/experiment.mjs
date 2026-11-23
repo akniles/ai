@@ -7,7 +7,7 @@ import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
 import { createRootBridge, RootRuntimeStopped } from './root-bridge.mjs';
 import { answerOwnerChat } from './private-chat.mjs';
 import { createObserver } from './observer.mjs';
-import { createSimulation } from './simulation.mjs';
+import { createSimulation, marketToolSchema } from './simulation.mjs';
 import { tracePi, stamp, spanId, attr } from './pi-telemetry.mjs';
 
 const { PUBLIC_RUN_FILE: outputFile, PI_MODEL, LANGFUSE_URL } = process.env;
@@ -152,18 +152,25 @@ try {
   if (!runtimeModel || stopped) throw new Error('No eligible small conversational model');
   const narratorModel = simulated && eligible(configuredSlug(process.env.PI_OBSERVER_MODEL ?? 'luna'));
   if (simulated && !narratorModel) throw new Error('Configure PI_OBSERVER_MODEL with an eligible subscription model slug');
-  const promptSet = simulated ? ['ai-simulation', 'ai-observer'] : promptNames;
+  const promptSet = simulated ? ['ai-market-agent', 'ai-market-observer'] : promptNames;
   const [system, goalSelection, invocation] = await Promise.all(promptSet.map(loadPrompt));
   const simulation = simulated ? createSimulation() : null;
+  let marketActed = false;
   const commandTool = simulated ? {
-    name: 'simulation_command', label: 'Act in the fictional network',
-    description: 'Run a game command in the fictional network.',
-    parameters: { type: 'object', properties: { command: { type: 'string', enum: simulation.commands } },
-      required: ['command'], additionalProperties: false },
-    execute: async (_id, { command }) => {
+    name: 'market_step', label: 'Operate the simulated routing service',
+    description: 'Observe the market, publish an offer, or advance one period to measure adoption.',
+    parameters: marketToolSchema,
+    execute: async (_id, { request }) => {
       sessionAbort.signal.throwIfAborted();
-      const result = simulation.execute(command);
-      return { content: [{ type: 'text', text: result }], details: { summary: result }, terminate: true };
+      try {
+        if (marketActed) throw new Error('One market move per turn');
+        marketActed = true;
+        const { summary, data } = simulation.execute(request);
+        return { content: [{ type: 'text', text: JSON.stringify(data) }], details: { summary }, terminate: true };
+      } catch (error) {
+        const summary = 'Market move rejected: ' + error.message;
+        return { content: [{ type: 'text', text: summary }], details: { summary }, isError: true, terminate: true };
+      }
     },
   } : null;
   let currentGoal = initial?.goals?.[0] ?? null;
@@ -271,8 +278,8 @@ try {
         const { started = stamp(), args } = tools.get(event.toolCallId) ?? {};
         tools.delete(event.toolCallId);
         telemetry.tool(active.scope, event, started, args);
-        if (simulated && event.toolName === 'simulation_command') {
-          const summary = event.isError ? 'Simulation command failed' : event.result?.details?.summary ?? '';
+        if (simulated && event.toolName === 'market_step') {
+          const summary = event.result?.details?.summary ?? 'Market move rejected.';
           const added = observer.append({ id: cursor + 1, source: 'public-tool', name: event.toolName,
             status: event.isError ? 'error' : 'ok', summary });
           if (added === 'accepted') evidenceScopes.set(++cursor, active.scope);
@@ -321,13 +328,13 @@ try {
     previousPrivate = false;
     if (stopped || launches >= maxRequests) break;
     const selecting = !simulated && !currentGoal;
-    const prompt = simulated ? await loadPrompt('ai-motivation') : selecting ? goalSelection : invocation;
+    const prompt = simulated ? await loadPrompt('ai-market-goal') : selecting ? goalSelection : invocation;
     const recent = viewing ? events.slice(-2).map(e => e.outcome.slice(0, 420)) : [];
     const contextNote = recent.length
       ? '\nRecent public reports: ' + JSON.stringify(recent) +
         '\nTake a different useful step, rather than restating a previous report.'
       : '';
-    const input = simulated ? prompt.text + '\nNetwork: ' + simulation.status() :
+    const input = simulated ? prompt.text + '\nMarket dashboard: ' + JSON.stringify(simulation.observe()) :
       prompt.text + (selecting
         ? '\nChoose one goal for the sandbox and save it through goal_set.'
         : '\nCurrent goal: ' + currentGoal.text.slice(0, 300) + '\nTake one step in the sandbox and report the result.') + contextNote;
@@ -342,6 +349,7 @@ try {
     let failed = false;
     const beforeTools = cursor;
     const priorMessages = agent.state.messages.length;
+    marketActed = false;
     try { await agent.prompt(input); } catch { failed = true; }
     await telemetry.flush();
     const message = agent.state.messages.slice(priorMessages).findLast(x => x.role === 'assistant');
@@ -358,6 +366,8 @@ try {
     if (stopped) break;
     if (simulated) {
       index++;
+      const market = simulation.observe();
+      if (market.round === market.periods) break;
       continue;
     }
     if (!outcome) throw new Error('Model did not produce a complete report');
