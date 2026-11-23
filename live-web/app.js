@@ -1,7 +1,7 @@
-import { $, clock } from "./ui.js";
-import { renderActivity } from "./activity.js";
+import { $ } from "./ui.js";
+import { activityItems, renderActivity } from "./activity.js";
 import { setupSteering } from "./chat.js";
-import { openTrace as showTrace, restoreTrace } from "./trace.js";
+import { restoreTrace } from "./trace.js";
 
 function setupMemoryAtlas() {
   const content = $("memory-content");
@@ -81,20 +81,13 @@ let feedSnapshot = "";
 const observations = new Map();
 let nextCursor;
 
-function renderStatus() {
-  $("activity-status").hidden = true;
-  if (data.langfuse?.startsWith("https://")) {
-    $("langfuse-link").href = data.langfuse + "/project/ai/traces";
-    $("langfuse-link").hidden = false;
-  }
-}
-
 function renderFeed() {
-  renderActivity(data, { shown, openTrace });
-}
-
-function openTrace(observation, wholeTrace = false) {
-  return showTrace(observation, wholeTrace);
+  const items = activityItems(data);
+  const snapshot = JSON.stringify([items, shown, nextCursor]);
+  if (snapshot !== feedSnapshot) {
+    feedSnapshot = snapshot;
+    renderActivity(items, shown, nextCursor);
+  }
 }
 
 async function refresh() {
@@ -103,31 +96,16 @@ async function refresh() {
     const response = await fetch("/api/live", { cache: "no-store" });
     if (!response.ok) throw new Error();
     data = await response.json();
-    for (const o of data.observations) observations.set(o.id, o);
+    for (const o of data.observations ?? []) observations.set(o.id, o);
     if (nextCursor === undefined && data.tracingAvailable)
       nextCursor = data.nextCursor;
-    data.nextCursor = nextCursor;
     data.observations = [...observations.values()];
     $("connection-error").hidden = true;
-    renderStatus();
-    const nextFeed = JSON.stringify([
-      data.events,
-      data.observations,
-      data.tracingAvailable,
-    ]);
-    if (nextFeed !== feedSnapshot && !$("trace-dialog").open) {
-      feedSnapshot = nextFeed;
-      renderFeed();
-    }
+    renderFeed();
     updateStreamAtlas(data.memories);
   } catch {
-    $("connection-error").textContent = data
-      ? "Updates are unavailable. Showing information received at " +
-        clock(data.now) +
-        ". Retrying…"
-      : "Could not load activity. Retrying…";
+    $("connection-error").textContent = "Could not refresh the feed. Retrying…";
     $("connection-error").hidden = false;
-    $("activity-status").hidden = true;
   }
 }
 $("more").addEventListener("click", async () => {
@@ -141,10 +119,9 @@ $("more").addEventListener("click", async () => {
       if (!response.ok) throw new Error();
       const page = await response.json();
       if (!page.tracingAvailable) throw new Error();
-      for (const o of page.observations) observations.set(o.id, o);
+      for (const o of page.observations ?? []) observations.set(o.id, o);
       nextCursor = page.nextCursor;
-      data.nextCursor = nextCursor;
-      data.observations = [...observations.values()];
+        data.observations = [...observations.values()];
     }
     shown += 5;
     renderFeed();
