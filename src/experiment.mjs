@@ -167,7 +167,7 @@ try {
   };
   const parseGoal = value => {
     if (!value) return null;
-    return { goal: publicField(value.goal, 160), reason: publicField(value.reason, 240), updated: value.updated };
+    return { goal: publicField(value.goal, 160), reason: publicField(value.reason, 240) };
   };
   let workingGoal = parseGoal(initial?.workingGoal);
   let goalActed = false;
@@ -187,7 +187,7 @@ try {
           return { content: [{ type: 'text', text: 'Working goal unchanged.' }], details: { changed: false }, terminate: true };
         if (goalActed) throw new Error('One working-goal update per actor turn');
         goalActed = true;
-        const saved = bridge ? await bridge.setWorkingGoal({ goal, reason }) : { workingGoal: { goal, reason, updated: new Date().toISOString() }, changed: true };
+        const saved = bridge ? await bridge.setWorkingGoal({ goal, reason }) : { workingGoal: { goal, reason }, changed: true };
         const next = parseGoal(saved?.workingGoal);
         if (!next || typeof saved.changed !== 'boolean') throw new Error('Goal save was not confirmed');
         const changed = saved.changed;
@@ -262,11 +262,13 @@ try {
       const scope = evidenceScopes.get(card.evidence.at(-1).id);
       const report = { id: card.id, goal: scope.goal,
         action: 'Observer update', outcome: card.text };
-      if (bridge && !events.some(e => e.id === card.id)) await bridge.observe({
-        name: 'agent.work', input: { task: 'Working goal' }, output: { report: report.outcome },
-        start: Date.now(), traceId: scope.traceId, parentSpanId: scope.parentSpanId,
-      });
-      if (!events.some(e => e.id === card.id)) events.push(report);
+      if (!events.some(e => e.id === card.id)) {
+        if (bridge) await bridge.observe({
+          name: 'agent.work', input: { task: 'Working goal' }, output: { report: report.outcome },
+          start: Date.now(), traceId: scope.traceId, parentSpanId: scope.parentSpanId,
+        });
+        events.push(report);
+      }
       await publish('Running');
       for (const event of card.evidence) evidenceScopes.delete(event.id);
     } });
@@ -294,7 +296,7 @@ try {
         if (event.toolName === 'set_working_goal' && !event.isError && event.result?.details?.changed === true) {
           const summary = event.result?.details?.summary ?? 'Working goal updated.';
           const added = observer.append({ id: cursor + 1, source: 'public-tool', name: event.toolName,
-            status: event.isError ? 'error' : 'ok', summary });
+            status: 'ok', summary });
           if (added === 'accepted') evidenceScopes.set(++cursor, { ...active.scope, goal: workingGoal?.goal ?? active.scope.goal });
           else if (added === 'full') stop();
         }
@@ -358,6 +360,3 @@ clearInterval(pausePoll);
 clearTimeout(endTimer);
 try { await publish(status); } catch { console.error('Could not publish stopped status.'); process.exitCode = 1; }
 try { if (launches) { await telemetry?.flush(); await exportTrace(true); console.log((viewing ? 'Langfuse session: ' : 'Langfuse trace: ') + traceId); } } catch { console.error('Langfuse trace delivery failed.'); process.exitCode = 1; }
-
-
-

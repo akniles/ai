@@ -7,14 +7,6 @@ export function el(tag, className, text) {
   return node;
 }
 
-export const date = (time) =>
-  new Date(time).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-
 export const clock = (time) =>
   new Date(time).toLocaleTimeString(undefined, {
     hour: "2-digit",

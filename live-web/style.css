@@ -97,78 +97,6 @@ footer {
   letter-spacing: -0.025em;
   margin-top: 0.25em;
 }
-.activity-status {
-  color: var(--muted);
-  font-size: 0.875rem;
-  margin: 0 0 22px;
-  max-width: 80ch;
-}
-.activity-status .text-button {
-  margin-left: 12px;
-}
-.timeline {
-  background: var(--panel);
-  border-radius: 12px;
-  padding: 0 28px;
-}
-.event {
-  display: grid;
-  grid-template-columns: 110px minmax(0, 1fr);
-  gap: 28px;
-  padding: 26px 0;
-}
-.event + .event {
-  border-top: 1px solid var(--line);
-}
-.event-time {
-  color: var(--muted);
-  font-size: 0.8125rem;
-  padding-top: 3px;
-}
-.event-body {
-  min-width: 0;
-  max-width: 78ch;
-}
-.event-title {
-  font-size: 1.0625rem;
-  font-weight: 600;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-.event-note {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  line-height: 1.65;
-  margin-top: 10px;
-}
-.event-reason {
-  color: var(--muted);
-  font-size: 0.875rem;
-  margin-top: 10px;
-}
-.event-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 16px;
-  margin-top: 18px;
-}
-.text-button,
-.tool-link {
-  background: none;
-  border: 0;
-  border-radius: 0;
-  padding: 0;
-  color: var(--accent);
-  font-size: 0.875rem;
-  text-align: left;
-}
-.text-button:hover,
-.tool-link:hover {
-  background: none;
-  text-decoration: underline;
-  text-underline-offset: 4px;
-}
 .more {
   font-size: 0.875rem;
   margin-top: 18px;
@@ -187,9 +115,6 @@ footer {
 }
 #connection-error {
   padding-bottom: 18px;
-}
-.timeline > .detail-note {
-  padding-top: 24px;
 }
 footer {
   display: flex;
@@ -221,8 +146,7 @@ dialog::backdrop {
   background: #090c14c9;
   backdrop-filter: blur(5px);
 }
-.trace-header,
-.chat-header {
+.trace-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -233,8 +157,7 @@ dialog::backdrop {
   font-size: 1.5rem;
   overflow-wrap: anywhere;
 }
-.trace-header button,
-.close-button {
+.trace-header button {
   width: 44px;
   height: 44px;
   padding: 0;
@@ -325,22 +248,8 @@ dialog::backdrop {
   .hero {
     padding: 32px 0 36px;
   }
-  .event {
-    grid-template-columns: 1fr;
-    gap: 8px;
-    padding: 22px 0;
-  }
-  .timeline {
-    padding: 0 20px;
-  }
-  .event-time {
-    font-size: 0.75rem;
-  }
 }
 @media (max-width: 420px) {
-  .timeline {
-    padding-inline: 16px;
-  }
   dialog {
     padding: 20px;
   }

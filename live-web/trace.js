@@ -1,6 +1,6 @@
 import { $, el, clock } from "./ui.js";
 
-export function observationName(o) {
+function observationName(o) {
   const names = {
     "agent.work": "Autonomous work",
     "agent.goal_selection": "Choosing a goal",
@@ -34,7 +34,7 @@ export function observationName(o) {
 }
 
 // Missing parents in older recordings stay flat; no inferred relationships.
-export function traceTree(observations) {
+function traceTree(observations) {
   const nodes = new Map(
     observations.map((o) => [o.id, { ...o, children: [] }]),
   );
@@ -65,7 +65,7 @@ export function restoreTrace(search) {
 }
 
 let requestId = 0;
-export async function openTrace(observation, wholeTrace = false) {
+async function openTrace(observation, wholeTrace = false) {
   if (!traceIdPattern.test(observation.traceId ?? "")) return;
   const ticket = ++requestId;
   $("trace-title").textContent = wholeTrace
