@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { rename, writeFile } from 'node:fs/promises';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { Agent } from '@earendil-works/pi-agent-core';
 import { createModels, hasApi } from '@earendil-works/pi-ai';
 import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
@@ -25,9 +26,13 @@ const viewing = process.env.PI_OWNER_WINDOW === 'true';
 const ownerChat = viewing && process.env.PI_OWNER_CHAT === 'true';
 const maxRequests = viewing ? 20 : 2;
 const deadlineMs = 600_000;
-const delayMs = 20_000;
+const spacingMs = Number(process.env.PI_LLM_SLEEP_MS ?? (viewing ? 20_000 : 0));
+const modelsByAlias = new Map([['terra', 'gpt-6.1-terra'], ['luna', 'gpt-6-luna']]);
+const configuredSlug = value => modelsByAlias.get(value) ??
+  ([...modelsByAlias.values()].includes(value) ? value : null);
 const sessionAbort = new AbortController();
 let launches = 0;
+let nextDispatchAt = 0;
 let endTimer;
 let bridge;
 let langfuseAuth;
@@ -43,12 +48,6 @@ async function publish(status) {
 }
 
 const stop = () => { stopped = true; sessionAbort.abort(); agent?.abort(); };
-const pause = () => new Promise(resolve => {
-  const finish = () => { clearTimeout(timer); sessionAbort.signal.removeEventListener('abort', finish); resolve(); };
-  const timer = setTimeout(finish, delayMs);
-  sessionAbort.signal.addEventListener('abort', finish, { once: true });
-  if (sessionAbort.signal.aborted) finish();
-});
 const normalized = text => text.toLowerCase().replace(/[\p{P}\p{Z}\s]+/gu, ' ').trim();
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
@@ -108,6 +107,8 @@ async function exportTrace(final = false) {
 
 let status = 'Stopped';
 try {
+  if (!Number.isSafeInteger(spacingMs) || spacingMs < 0 || spacingMs > 120_000)
+    throw new Error('Invalid PI_LLM_SLEEP_MS');
   // Credentials are supplied in memory on the private attached input stream.
   let envelope = '';
   for await (const chunk of process.stdin.setEncoding('utf8')) {
@@ -143,10 +144,13 @@ try {
     const candidate = allowed.some(x => x.slug === id) && models.getModel('openai', id);
     return candidate && hasApi(candidate, 'openai-responses') ? { ...candidate, baseUrl: base } : null;
   };
-  const candidates = PI_MODEL ? [PI_MODEL] : ['gpt-6.1-terra', 'gpt-5.4-mini', 'gpt-5.1-codex-mini'];
+  const requestedActor = process.env.PI_MODEL_ACTOR;
+  const actorSlug = configuredSlug(requestedActor);
+  if (requestedActor !== undefined && !actorSlug) throw new Error('Invalid PI_MODEL_ACTOR');
+  const candidates = actorSlug ? [actorSlug] : PI_MODEL ? [PI_MODEL] : ['gpt-6.1-terra', 'gpt-5.4-mini', 'gpt-5.1-codex-mini'];
   const runtimeModel = candidates.map(eligible).find(Boolean);
   if (!runtimeModel || stopped) throw new Error('No eligible small conversational model');
-  const narratorModel = simulated && eligible(process.env.PI_OBSERVER_MODEL ?? 'gpt-6-luna');
+  const narratorModel = simulated && eligible(configuredSlug(process.env.PI_OBSERVER_MODEL ?? 'luna'));
   if (simulated && !narratorModel) throw new Error('Configure PI_OBSERVER_MODEL with an eligible subscription model slug');
   const promptSet = simulated ? ['ai-simulation', 'ai-observer'] : promptNames;
   const [system, goalSelection, invocation] = await Promise.all(promptSet.map(loadPrompt));
@@ -178,13 +182,29 @@ try {
   };
   if (stopped) throw new Error('Stopped');
   const secrets = [accessToken, runtimeToken, langfusePublicKey, langfuseSecretKey];
-  const countedStream = (m, context, options) => {
+  const countedStream = async (m, context, options) => {
+    const signal = AbortSignal.any([sessionAbort.signal, options?.signal].filter(Boolean));
+    signal.throwIfAborted();
+    let remaining = nextDispatchAt - performance.now();
+    while (remaining > 0) {
+      await sleep(Math.ceil(remaining), undefined, { signal });
+      remaining = nextDispatchAt - performance.now();
+    }
+    signal.throwIfAborted();
     if (stopped || launches >= maxRequests) throw new Error('Pi generation budget exhausted');
     launches++;
-    return models.streamSimple(m, context, {
-      ...options, apiKey: accessToken, maxTokens: 256, maxRetries: 0,
-      signal: AbortSignal.any([sessionAbort.signal, options?.signal, AbortSignal.timeout(30_000)].filter(Boolean)),
-    });
+    const markComplete = () => { nextDispatchAt = performance.now() + spacingMs; };
+    try {
+      const stream = models.streamSimple(m, context, {
+        ...options, apiKey: accessToken, maxTokens: 256, maxRetries: 0,
+        signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+      });
+      void stream.result().then(markComplete, markComplete);
+      return stream;
+    } catch (error) {
+      markComplete();
+      throw error;
+    }
   };
   telemetry = tracePi({ stream: countedStream, spans, session: traceId });
   const active = { scope: null };
@@ -276,7 +296,6 @@ try {
   await publish('Running');
   let previousPrivate = false;
   for (let index = 0, round = 0; index < maxRequests && launches < maxRequests - (simulated ? 1 : 0); round++) {
-    if (viewing && round) await pause();
     if (stopped) break;
     if (simulated) await broadcast();
     if (launches >= maxRequests - (simulated ? 1 : 0)) break;

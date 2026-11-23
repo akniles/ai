@@ -34,3 +34,7 @@ Create these Langfuse text prompts with the production label before enabling the
 Move the production label on ai-motivation to change the objective; the worker reads it before each turn. Langfuse records generation and tool spans; private replies log operational metadata without message text.
 
 Deployment requires a separate reviewed worker image and supervisor configuration. A push to main publishes the browser assets only. The current worker window and token budget still apply.
+
+## Owner admin
+
+The VPS serves the three admin-web assets separately at /admin. Pair this browser with a fresh code approved by Dora. The owner-only API changes pause state and saves model aliases and generation delay. Terra and Luna are resolved through the existing subscription. Settings apply on the next run; the delay is measured between the end of one model call and dispatch of the next, including calls to the observer. The production time and request limits still apply.

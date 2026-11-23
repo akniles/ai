@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Experiment control</title>
+  <link rel="stylesheet" href="/admin/style.css">
+  <script type="module" src="/admin/app.js"></script>
+</head>
+<body>
+  <main>
+    <a class="back" href="/#live">← Live</a>
+    <h1>Experiment control</h1>
+    <p id="notice" role="status">Checking access…</p>
+    <section id="access" hidden aria-label="Owner access">
+      <button id="pair" type="button">Get pairing code</button>
+      <div id="challenge" hidden>
+        <p>Send this code to Dora in your private chat:</p>
+        <code id="code"></code>
+        <p>Once Dora approves it, finish pairing in this browser.</p>
+        <button id="claim" type="button">Finish pairing</button>
+      </div>
+    </section>
+    <section id="control" hidden aria-label="Experiment controls">
+      <div class="switchbar">
+        <span id="state" aria-live="polite"></span>
+        <button id="toggle" type="button">Resume</button>
+      </div>
+      <div class="settings" id="settings">
+        <label>Agent model <select id="actor"><option value="terra">Terra</option><option value="luna">Luna</option></select></label>
+        <label>Observer model <select id="observer"><option value="terra">Terra</option><option value="luna">Luna</option></select></label>
+        <label>Delay between calls <span class="number"><input id="sleepSeconds" type="number" min="0" max="120" step="1" required inputmode="numeric"> s</span></label>
+      </div>
+      <p class="hint">Settings apply on the next resume.</p>
+    </section>
+  </main>
+</body>
+</html>

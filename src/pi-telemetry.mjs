@@ -30,7 +30,7 @@ export function tracePi({ stream, spans, session }) {
         : p.type === 'toolCall' ? [{ type: p.type, id: p.id, name: p.name, arguments: p.arguments }] : []);
   return {
     model(scope) {
-      return (model, context, options) => {
+      return async (model, context, options) => {
         const started = stamp();
         const secrets = scope.secrets ?? [];
         const input = scope.private ? 'Authenticated private message'
@@ -51,7 +51,7 @@ export function tracePi({ stream, spans, session }) {
           });
         };
         let result;
-        try { result = stream(model, context, options); }
+        try { result = await stream(model, context, options); }
         catch (error) { record(); throw error; }
         const tracked = result.result().then(record, () => record());
         pending.add(tracked);
