@@ -19,3 +19,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 #sleepSeconds { width: 5rem; padding-inline: .45rem; }
 #challenge { border-top: 1px solid #cec1ae; margin-top: 1rem; }
 #code { display: inline-block; font-size: 1.25rem; padding: .3rem; user-select: all; }
+
+.cleanup { margin-top: 2rem; border-top: 1px solid #cec1ae; display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-block: 1rem; }
+#clear { color: #8d3c28; border-color: #b37362; }

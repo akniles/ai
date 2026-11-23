@@ -80,6 +80,8 @@ let shown = 3;
 let feedSnapshot = "";
 const observations = new Map();
 let nextCursor;
+let cutoffMs = null;
+const marker = page => Date.parse(page.clearedAt) || 0;
 
 function renderFeed() {
   const items = activityItems(data);
@@ -95,7 +97,18 @@ async function refresh() {
   try {
     const response = await fetch("/api/live", { cache: "no-store" });
     if (!response.ok) throw new Error();
-    data = await response.json();
+    const page = await response.json();
+    const nextCutoff = marker(page);
+    if (cutoffMs !== null && nextCutoff < cutoffMs) return;
+    if (cutoffMs !== null && nextCutoff > cutoffMs) {
+      observations.clear();
+      nextCursor = undefined;
+      shown = 3;
+      const dialog = document.querySelector('#trace-dialog[open]');
+      if (dialog) dialog.close();
+    }
+    cutoffMs = nextCutoff;
+    data = page;
     for (const o of data.observations ?? []) observations.set(o.id, o);
     if (nextCursor === undefined && data.tracingAvailable)
       nextCursor = data.nextCursor;
@@ -118,10 +131,14 @@ $("more").addEventListener("click", async () => {
       );
       if (!response.ok) throw new Error();
       const page = await response.json();
+      if (marker(page) !== cutoffMs) {
+        void refresh();
+        return;
+      }
       if (!page.tracingAvailable) throw new Error();
       for (const o of page.observations ?? []) observations.set(o.id, o);
       nextCursor = page.nextCursor;
-        data.observations = [...observations.values()];
+      data.observations = [...observations.values()];
     }
     shown += 5;
     renderFeed();

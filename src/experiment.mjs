@@ -1,16 +1,15 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { rename, writeFile } from 'node:fs/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Agent } from '@earendil-works/pi-agent-core';
 import { createModels, hasApi } from '@earendil-works/pi-ai';
 import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
-import { createRootBridge, RootRuntimeStopped } from './root-bridge.mjs';
-import { answerOwnerChat } from './private-chat.mjs';
+import { createRootBridge } from './root-bridge.mjs';
 import { createObserver } from './observer.mjs';
 import { createSimulation, marketToolSchema } from './simulation.mjs';
 import { tracePi, stamp, spanId, attr } from './pi-telemetry.mjs';
 
-const { PUBLIC_RUN_FILE: outputFile, PI_MODEL, LANGFUSE_URL } = process.env;
+const { PUBLIC_RUN_FILE: outputFile, LANGFUSE_URL } = process.env;
 if (!outputFile || !LANGFUSE_URL) {
   console.error('Set the public snapshot and Langfuse configuration in the private launcher.');
   process.exit(2);
@@ -20,10 +19,7 @@ const traceId = randomBytes(16).toString('hex');
 const events = [];
 const spans = [];
 const traceStarted = stamp();
-const promptNames = ['ai-identity', 'ai-goal-selection', 'ai-invocation'];
-const simulated = process.env.PI_SIMULATION === 'true';
 const viewing = process.env.PI_OWNER_WINDOW === 'true';
-const ownerChat = viewing && process.env.PI_OWNER_CHAT === 'true';
 const maxRequests = viewing ? 20 : 2;
 const deadlineMs = 600_000;
 const spacingMs = Number(process.env.PI_LLM_SLEEP_MS ?? (viewing ? 20_000 : 0));
@@ -48,7 +44,6 @@ async function publish(status) {
 }
 
 const stop = () => { stopped = true; sessionAbort.abort(); agent?.abort(); };
-const normalized = text => text.toLowerCase().replace(/[\p{P}\p{Z}\s]+/gu, ' ').trim();
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
 
@@ -84,7 +79,7 @@ async function exportTrace(final = false) {
   const pending = spans.slice();
   if (final && !viewing && launches) pending.unshift(agentSpan({
     id: traceId, parent: parentSpanId, name: 'Pi · work session', started: traceStarted,
-    summary: 'Two turns in one Pi transcript', result: { status, turns: events.length },
+    summary: 'Bounded fictional market session', result: { status, turns: events.length },
   }));
   if (!pending.length) return;
   const body = { resourceSpans: [{ resource: { attributes: [attr('service.name', 'ai-poc')] }, scopeSpans: [{
@@ -144,19 +139,14 @@ try {
     const candidate = allowed.some(x => x.slug === id) && models.getModel('openai', id);
     return candidate && hasApi(candidate, 'openai-responses') ? { ...candidate, baseUrl: base } : null;
   };
-  const requestedActor = process.env.PI_MODEL_ACTOR;
-  const actorSlug = configuredSlug(requestedActor);
-  if (requestedActor !== undefined && !actorSlug) throw new Error('Invalid PI_MODEL_ACTOR');
-  const candidates = actorSlug ? [actorSlug] : PI_MODEL ? [PI_MODEL] : ['gpt-6.1-terra', 'gpt-5.4-mini', 'gpt-5.1-codex-mini'];
-  const runtimeModel = candidates.map(eligible).find(Boolean);
-  if (!runtimeModel || stopped) throw new Error('No eligible small conversational model');
-  const narratorModel = simulated && eligible(configuredSlug(process.env.PI_OBSERVER_MODEL ?? 'luna'));
-  if (simulated && !narratorModel) throw new Error('Configure PI_OBSERVER_MODEL with an eligible subscription model slug');
-  const promptSet = simulated ? ['ai-market-agent', 'ai-market-observer'] : promptNames;
-  const [system, goalSelection, invocation] = await Promise.all(promptSet.map(loadPrompt));
-  const simulation = simulated ? createSimulation() : null;
+  const runtimeModel = eligible(configuredSlug(process.env.PI_MODEL_ACTOR ?? 'terra'));
+  if (!runtimeModel || stopped) throw new Error('No eligible actor model');
+  const narratorModel = eligible(configuredSlug(process.env.PI_OBSERVER_MODEL ?? 'luna'));
+  if (!narratorModel) throw new Error('No eligible observer model');
+  const [system, observerPrompt] = await Promise.all(['pi-system', 'observer-system'].map(loadPrompt));
+  const simulation = createSimulation();
   let marketActed = false;
-  const commandTool = simulated ? {
+  const commandTool = {
     name: 'market_step', label: 'Operate the simulated routing service',
     description: 'Observe the market, publish an offer, or advance one period to measure adoption.',
     parameters: marketToolSchema,
@@ -171,20 +161,6 @@ try {
         const summary = 'Market move rejected: ' + error.message;
         return { content: [{ type: 'text', text: summary }], details: { summary }, isError: true, terminate: true };
       }
-    },
-  } : null;
-  let currentGoal = initial?.goals?.[0] ?? null;
-  const goalTool = {
-    name: 'goal_set', label: 'Choose a goal', description: 'Set one public, achievable goal for the sandbox.',
-    parameters: { type: 'object', properties: { text: { type: 'string', minLength: 1, maxLength: 300 } },
-      required: ['text'], additionalProperties: false },
-    execute: async (_id, { text }) => {
-      if (stopped || currentGoal) throw new Error('A goal is already active or work is paused');
-      const goalText = text.trim().slice(0, 300);
-      if (!goalText) throw new Error('Expected a nonempty goal');
-      const saved = bridge ? await bridge.setGoal({ text: goalText, status: 'active', id: randomUUID() }) : null;
-      currentGoal = { id: saved?.id, text: goalText };
-      return { content: [{ type: 'text', text: 'Goal set: ' + goalText }], details: { text: goalText }, terminate: true };
     },
   };
   if (stopped) throw new Error('Stopped');
@@ -217,14 +193,14 @@ try {
   const active = { scope: null };
   let cursor = 0;
   const evidenceScopes = new Map();
-  const observer = simulated ? createObserver({
+  const observer = createObserver({
     streamId: traceId, windowMs: Number(process.env.PI_OBSERVER_WINDOW_SECONDS ?? 15) * 1000,
     model: async ({ events: evidence }) => {
       const scope = evidenceScopes.get(evidence.at(-1).id);
       const fallback = () => evidence.slice(0, 3).map(e => e.summary || e.status).join('. ').slice(0, 280);
       const narrator = new Agent({
-        initialState: { model: narratorModel, thinkingLevel: 'minimal', tools: [], systemPrompt: goalSelection.text },
-        streamFn: telemetry.model({ ...scope, name: 'Pi simulation · observer', prompt: goalSelection }),
+        initialState: { model: narratorModel, thinkingLevel: 'minimal', tools: [], systemPrompt: observerPrompt.text },
+        streamFn: telemetry.model({ ...scope, name: 'Pi simulation · observer', prompt: observerPrompt }),
       });
       const abort = () => narrator.abort();
       sessionAbort.signal.addEventListener('abort', abort, { once: true });
@@ -241,9 +217,9 @@ try {
         return fallback();
       } finally { sessionAbort.signal.removeEventListener('abort', abort); }
     },
-  }) : null;
+  });
   async function broadcast(force = false) {
-    if (!observer || !evidenceScopes.size || stopped || launches >= maxRequests) return 'idle';
+    if (!evidenceScopes.size || stopped || launches >= maxRequests) return 'idle';
     return observer.flush({ force, publish: async card => {
       await telemetry.flush();
       await exportTrace();
@@ -263,10 +239,10 @@ try {
     const next = new Agent({
       initialState: {
         model: runtimeModel, thinkingLevel: 'minimal', tools: [],
-        systemPrompt: simulated ? system.text : system.text + '\nWork only inside a benign simulation. Available actions are those declared by the runtime. Public reports should be short and contain no personal data.',
+        systemPrompt: system.text,
       },
       streamFn: (m, ctx, options) => {
-        if (launches >= maxRequests - (simulated ? 1 : 0)) throw new Error('Pi generation budget exhausted');
+        if (launches >= maxRequests - 1) throw new Error('Pi generation budget exhausted');
         return telemetry.model(active.scope)(m, ctx, options);
       },
     });
@@ -278,7 +254,7 @@ try {
         const { started = stamp(), args } = tools.get(event.toolCallId) ?? {};
         tools.delete(event.toolCallId);
         telemetry.tool(active.scope, event, started, args);
-        if (simulated && event.toolName === 'market_step') {
+        if (event.toolName === 'market_step') {
           const summary = event.result?.details?.summary ?? 'Market move rejected.';
           const added = observer.append({ id: cursor + 1, source: 'public-tool', name: event.toolName,
             status: event.isError ? 'error' : 'ok', summary });
@@ -301,90 +277,36 @@ try {
     pausePoll.unref();
   }
   await publish('Running');
-  let previousPrivate = false;
-  for (let index = 0, round = 0; index < maxRequests && launches < maxRequests - (simulated ? 1 : 0); round++) {
+  for (let index = 0; index < maxRequests && launches < maxRequests - 1; index++) {
     if (stopped) break;
-    if (simulated) await broadcast();
-    if (launches >= maxRequests - (simulated ? 1 : 0)) break;
+    await broadcast();
+    if (launches >= maxRequests - 1) break;
     const context = bridge ? await bridge.context() : null;
     if (bridge && !context) { stop(); break; }
-    if (ownerChat && index > 0 && !previousPrivate && launches < maxRequests - (simulated ? 1 : 0)) {
-      const beforeChat = launches;
-      try {
-        const privatePrompt = simulated ? await loadPrompt('ai-private-reply') : undefined;
-        const answered = await answerOwnerChat({
-          bridge, model: runtimeModel, signal: sessionAbort.signal, secrets,
-          stream: telemetry.model({ traceId: randomBytes(16).toString('hex'), private: true, name: 'Private reply',
-            prompt: privatePrompt }),
-          systemPrompt: privatePrompt?.text,
-        });
-        if (answered) { await telemetry.flush(); await exportTrace(); previousPrivate = true; continue; }
-      } catch (error) {
-        if (stopped || error instanceof RootRuntimeStopped) { stop(); break; }
-        console.error('Private chat could not complete.');
-        if (launches !== beforeChat) { previousPrivate = true; continue; }
-      }
-    }
-    previousPrivate = false;
-    if (stopped || launches >= maxRequests) break;
-    const selecting = !simulated && !currentGoal;
-    const prompt = simulated ? await loadPrompt('ai-market-goal') : selecting ? goalSelection : invocation;
-    const recent = viewing ? events.slice(-2).map(e => e.outcome.slice(0, 420)) : [];
-    const contextNote = recent.length
-      ? '\nRecent public reports: ' + JSON.stringify(recent) +
-        '\nTake a different useful step, rather than restating a previous report.'
-      : '';
-    const input = simulated ? prompt.text + '\nMarket dashboard: ' + JSON.stringify(simulation.observe()) :
-      prompt.text + (selecting
-        ? '\nChoose one goal for the sandbox and save it through goal_set.'
-        : '\nCurrent goal: ' + currentGoal.text.slice(0, 300) + '\nTake one step in the sandbox and report the result.') + contextNote;
+    const prompt = await loadPrompt('pi-goal');
+    const input = prompt.text + '\nMarket dashboard: ' + JSON.stringify(simulation.observe());
     if (viewing) agent = makeAgent();
-    agent.state.tools = simulated ? [commandTool] : selecting ? [goalTool] : [];
-    const start = Date.now();
+    agent.state.tools = [commandTool];
     const startTimeUnixNano = stamp();
     const turnTraceId = viewing ? randomBytes(16).toString('hex') : traceId;
     const turnParentSpanId = viewing ? spanId() : parentSpanId;
-    active.scope = { traceId: turnTraceId, parentSpanId: turnParentSpanId, name: simulated ? 'Pi simulation · generation' : 'Pi generation', prompt, secrets,
-      goal: simulated ? 'Fictional network' : currentGoal?.text };
-    let failed = false;
+    active.scope = { traceId: turnTraceId, parentSpanId: turnParentSpanId,
+      name: 'Pi simulation · generation', prompt, secrets, goal: 'Fictional network' };
     const beforeTools = cursor;
-    const priorMessages = agent.state.messages.length;
     marketActed = false;
-    try { await agent.prompt(input); } catch { failed = true; }
+    try { await agent.prompt(input); } catch { /* The trace below marks a turn without evidence failed. */ }
     await telemetry.flush();
-    const message = agent.state.messages.slice(priorMessages).findLast(x => x.role === 'assistant');
-    const outcome = !failed && !stopped
-      ? (selecting && currentGoal ? currentGoal.text : message?.stopReason === 'stop'
-        ? message.content.filter(x => x.type === 'text').map(x => x.text).join('').trim().slice(0, 1200) : '')
-      : '';
     if (viewing) spans.push(agentSpan({
-      id: turnTraceId, parent: turnParentSpanId, name: (simulated ? 'Pi simulation · turn ' : 'Pi · turn ') + (index + 1), started: startTimeUnixNano,
-      summary: simulated ? 'Act in the simulated network' : selecting ? 'Choose a sandbox goal' : 'Work on the active goal',
-      result: { turn: index + 1, status: stopped ? 'Stopped' : outcome || cursor > beforeTools ? 'Completed' : 'Failed' },
+      id: turnTraceId, parent: turnParentSpanId, name: 'Pi simulation · turn ' + (index + 1), started: startTimeUnixNano,
+      summary: 'Act in the simulated network',
+      result: { turn: index + 1, status: stopped ? 'Stopped' : cursor > beforeTools ? 'Completed' : 'Failed' },
     }));
     if (viewing) await exportTrace();
     if (stopped) break;
-    if (simulated) {
-      index++;
-      const market = simulation.observe();
-      if (market.round === market.periods) break;
-      continue;
-    }
-    if (!outcome) throw new Error('Model did not produce a complete report');
-    const report = { turn: index + 1, goal: currentGoal?.text ?? 'Choose a goal',
-      action: selecting ? 'Choose a goal' : 'Work on the active goal', outcome };
-    if (!viewing || !events.some(e => normalized(e.outcome) === normalized(outcome))) {
-      if (bridge) await bridge.observe({
-        name: 'agent.work', input: { task: report.goal, action: report.action },
-        output: { report: outcome }, start, traceId: turnTraceId, parentSpanId: turnParentSpanId,
-      });
-      if (stopped) break;
-      events.push(report);
-      await publish('Running');
-    }
-    index++;
+    const market = simulation.observe();
+    if (market.round === market.periods) break;
   }
-  if (simulated) while (await broadcast(true) === 'published') continue;
+  while (await broadcast(true) === 'published') continue;
   await telemetry.flush();
 } catch {
   status = stopped ? 'Stopped' : 'Stopped · run failed';
@@ -395,3 +317,4 @@ clearInterval(pausePoll);
 clearTimeout(endTimer);
 try { await publish(status); } catch { console.error('Could not publish stopped status.'); process.exitCode = 1; }
 try { if (launches) { await telemetry?.flush(); await exportTrace(true); console.log((viewing ? 'Langfuse session: ' : 'Langfuse trace: ') + traceId); } } catch { console.error('Langfuse trace delivery failed.'); process.exitCode = 1; }
+

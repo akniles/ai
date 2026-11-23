@@ -5,6 +5,7 @@ const notice = byId('notice');
 const toggle = byId('toggle');
 const pair = byId('pair');
 const claim = byId('claim');
+const clear = byId('clear');
 const fields = ['actor', 'observer', 'sleepSeconds'].map(byId);
 let snapshot;
 let working = false;
@@ -78,7 +79,7 @@ async function act(action, errorMessage) {
   if (working) return;
   working = true;
   pollId++;
-  toggle.disabled = pair.disabled = claim.disabled = true;
+  toggle.disabled = pair.disabled = claim.disabled = clear.disabled = true;
   for (const field of fields) field.disabled = true;
   notice.textContent = '';
   try {
@@ -88,7 +89,7 @@ async function act(action, errorMessage) {
     else notice.textContent = typeof errorMessage === 'function' ? errorMessage(error) : errorMessage;
   } finally {
     working = false;
-    toggle.disabled = pair.disabled = claim.disabled = false;
+    toggle.disabled = pair.disabled = claim.disabled = clear.disabled = false;
     for (const field of fields) field.disabled = false;
   }
 }
@@ -114,6 +115,16 @@ toggle.addEventListener('click', () => act(async () => {
 function asyncStatusError() {
   return 'Could not confirm the change. Checking status again…';
 }
+
+clear.addEventListener('click', () => {
+  if (!snapshot || !window.confirm('Clear the history and memories visible on the site? Private traces will be kept.')) return;
+  void act(async () => {
+    const status = await request('/admin/api', { clear: true });
+    showStatus(status, true);
+    if (!status.clearedAt || !Number.isFinite(Date.parse(status.clearedAt))) throw new Error('Clear not confirmed');
+    notice.textContent = 'Public history and memory cleared.';
+  }, 'Could not confirm that the public history was cleared.');
+});
 
 for (const field of fields) {
   field.addEventListener('input', () => { editing = true; });

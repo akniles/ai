@@ -1,5 +1,4 @@
 const stoppedStatus = 423;
-const allowedStatuses = new Set(["active", "done", "abandoned"]);
 
 export class RootRuntimeStopped extends Error {
   constructor() {
@@ -53,59 +52,14 @@ export function createRootBridge({ url, token }) {
     }
   }
 
-  let goalId;
-  let claimedId;
-  let replyAttempted = false;
-
   return Object.freeze({
     async context() {
       try {
-        const state = await request("/runtime/context");
-        const goal = Array.isArray(state?.goals)
-          ? state.goals.find(g => g?.status === "active" && typeof g.id === "string" &&
-              (!goalId || g.id === goalId))
-          : null;
-        return {
-          goals: goal ? [{ id: goal.id, status: "active", text: publicText(goal.text, 2000) }] : [],
-          time: { now: publicText(state?.time?.now, 50), timezone: publicText(state?.time?.timezone, 100) },
-          notificationCount: Array.isArray(state?.notifications) ? state.notifications.length : 0,
-        };
+        return await request("/runtime/context");
       } catch (error) {
         if (error instanceof RootRuntimeStopped) return null;
         throw error;
       }
-    },
-
-    async claimOwnerMessage() {
-      if (claimedId) return null;
-      const pending = await request("/runtime/inbox/next");
-      if (pending === null) return null;
-      if (!pending || typeof pending.id !== "string" || !/^[a-zA-Z0-9_-]{1,100}$/.test(pending.id) ||
-          typeof pending.text !== "string" || !pending.text.trim() || pending.text.length > 2000)
-        throw new Error("Invalid private owner message");
-      claimedId = pending.id;
-      return { text: pending.text };
-    },
-
-    async replyToOwnerMessage(body) {
-      if (!claimedId || replyAttempted) throw new Error("No available owner message claim");
-      if (typeof body !== "string" || !body.trim() || body.length > 2000 || body.includes(token))
-        throw new Error("Invalid private owner reply");
-      replyAttempted = true;
-      const result = await request("/runtime/inbox/reply", { id: claimedId, body });
-      if (result?.ok !== true) throw new Error("Private owner reply was not accepted");
-      claimedId = undefined;
-      replyAttempted = false;
-    },
-
-    async setGoal({ text, status = "active", id }) {
-      const label = publicText(text, 2000);
-      if (!label || !allowedStatuses.has(status)) throw new Error("Invalid public goal");
-      if (typeof id !== "string" || !/^[a-zA-Z0-9_-]{1,100}$/.test(id))
-        throw new Error("An operator-selected public goal ID is required");
-      if (goalId && id !== goalId) throw new Error("Root bridge already manages a different goal");
-      goalId = id;
-      return request("/runtime/action", { name: "goal_set", id, text: label, status });
     },
 
     async observe({ name = "agent.work", input, output, start = Date.now(), traceId, parentSpanId }) {
@@ -137,10 +91,5 @@ export function createRootBridge({ url, token }) {
       });
     },
 
-    async journal({ summary }) {
-      const text = publicText(summary, 2000);
-      if (!text) throw new Error("A public journal summary is required");
-      return request("/runtime/action", { name: "journal", summary: text });
-    },
   });
 }

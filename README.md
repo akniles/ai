@@ -20,10 +20,12 @@ On an ordinary UI change, confirm the release commit at `/poc/health.json` and o
 
 ## Simulation observer
 
-See [Routing market experiment](docs/experiment-market.md) for the rules and Langfuse prompt names. Set PI_SIMULATION=true. The observer defaults to gpt-6-luna, uses no tools and writes its narration to the existing live timeline. PI_OBSERVER_WINDOW_SECONDS controls the batching window (default 15 seconds).
+See [Routing market experiment](docs/experiment-market.md) for the rules and Langfuse prompt names. The observer defaults to gpt-6-luna, uses no tools and writes its narration to the existing live timeline. PI_OBSERVER_WINDOW_SECONDS controls the batching window (default 15 seconds).
 
 Deploy a reviewed worker image with a pinned supervisor configuration. The Git timer publishes the public browser assets only. The current worker window and token budget still apply.
 
 ## Owner admin
 
 The VPS serves the three admin-web assets separately at /admin. Pair this browser with a fresh code approved by Dora. The owner-only API changes pause state and saves model aliases and generation delay. Terra and Luna are resolved through the existing subscription. Settings apply on the next run; the delay is measured between the end of one model call and dispatch of the next, including calls to the observer. The production time and request limits still apply.
+
+Clear hides public history and memory for every viewer. Private logs and settings are retained.
