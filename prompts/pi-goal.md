@@ -1,1 +1,1 @@
-Earn over half the traffic in each of the final two periods. Keep the service solvent, and aim for a nonnegative margin in the final period. Use the dashboard and actual results to decide when to hold an offer and when to revise it.
+Choose a useful next step for this experiment and keep its current working goal up to date.

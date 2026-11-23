@@ -2,11 +2,12 @@ import { $, el } from "./ui.js";
 
 export function activityItems(data) {
   const observations = data.observations ?? [];
-  const simulationTraces = new Set(observations
-    .filter(o => o.name === "Pi simulation · observer" || o.name?.startsWith("Pi simulation · turn "))
+  const workerTraces = new Set(observations
+    .filter(o => ["Pi · observer", "Pi simulation · observer"].includes(o.name) ||
+      ["Pi · turn ", "Pi simulation · turn "].some(prefix => o.name?.startsWith(prefix)))
     .map(o => o.traceId));
   return observations
-    .filter(o => o.name === "agent.work" && o.traceId && simulationTraces.has(o.traceId) &&
+    .filter(o => o.name === "agent.work" && o.traceId && workerTraces.has(o.traceId) &&
       typeof o.preview?.report === "string" && o.preview.report.trim())
     .sort((a, b) => new Date(b.start) - new Date(a.start))
     .map(o => o.preview.report.trim());

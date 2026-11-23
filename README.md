@@ -10,19 +10,11 @@ Pi owns the conversation, selects a goal, and continues from the previous outcom
 
 The separate `live-web/` directory contains the eight browser files for `/#live`. The same VPS timer checks `main` about every 90 seconds and publishes that allowlist as a complete release when its contents change. The live server reads it from a stable read-only mount. The prior releases remain on the host; revert a frontend commit in `main` to roll it back. The timer never executes scripts from Git, deploys backend code, or starts Pi.
 
-## Private Pi run
+## Pi worker
 
-The owner launcher supplies the short-lived token, Langfuse keys and private control credential through attached stdin, and sets the service origins and `PUBLIC_RUN_FILE`. Credentials stay out of launch arguments and container configuration. The runner loads the `production` versions of `ai-identity`, `ai-goal-selection` and `ai-invocation` directly from Langfuse at start. It fails closed if a prompt is unavailable. Run `npm ci --ignore-scripts` before starting an unprivileged private worker. `npm run run:pi` uses the existing production prompts. The two-turn smoke remains the default. The authenticated owner live mode uses a ten-minute viewing window capped at twenty model calls, paced twenty seconds apart. Each public turn has its own trace and card. Only the paired owner's private messages are eligible during a chat-bound window; those turns are excluded from the public feed and its Langfuse session. Optional private control wiring reads the owner pause state and publishes goals and work reports through the current site API. SIGTERM or SIGINT cancels work. The site reads only the explicitly public snapshot, never credentials or Langfuse configuration. An empty live feed shows an empty state. No model starts from a Git push.
+The owner launcher supplies the credentials on attached stdin. The worker reads `pi-system` and `observer-system` at startup and `pi-goal` before each turn. Pi can save a working goal with `set_working_goal`; a separate observer narrates saved changes. The viewing window remains limited to ten minutes and twenty total model requests. See [Runner and prompts](docs/experiment.md).
 
-## Fast end-to-end workflow
-
-On an ordinary UI change, confirm the release commit at `/poc/health.json` and open `/#live` at desktop and mobile widths. Use local fixtures to exercise incoming events without publishing them. This costs no model tokens. Separately, when changing the Pi loop, make one private two-turn run on a small eligible model, inspect the two feed entries and matching Langfuse trace, and leave the runner stopped. No test suite or browser automation runs with deployment.
-
-## Simulation observer
-
-See [Routing market experiment](docs/experiment-market.md) for the rules and Langfuse prompt names. The observer defaults to gpt-6-luna, uses no tools and writes its narration to the existing live timeline. PI_OBSERVER_WINDOW_SECONDS controls the batching window (default 15 seconds).
-
-Deploy a reviewed worker image with a pinned supervisor configuration. The Git timer publishes the public browser assets only. The current worker window and token budget still apply.
+The Git timer publishes only the frontend. Deploy the worker as a reviewed image with a pinned supervisor configuration. No model starts from a Git push.
 
 ## Owner admin
 
