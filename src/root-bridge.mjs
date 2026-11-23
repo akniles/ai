@@ -62,6 +62,15 @@ export function createRootBridge({ url, token }) {
       }
     },
 
+    async setWorkingGoal({ goal, reason }) {
+      const safeGoal = publicText(goal, 160);
+      const safeReason = publicText(reason, 240);
+      if (!safeGoal || !safeReason || safeGoal !== goal || safeReason !== reason ||
+          /[\u0000-\u001f\u007f<>]/u.test(goal + reason))
+        throw new Error("Invalid public working goal");
+      return request("/runtime/working-goal", { goal: safeGoal, reason: safeReason });
+    },
+
     async observe({ name = "agent.work", input, output, start = Date.now(), traceId, parentSpanId }) {
       if (name !== "agent.work") throw new Error("Only agent.work observations are supported");
       if (!Number.isSafeInteger(start) || start < 0 || start > Date.now())
@@ -93,3 +102,4 @@ export function createRootBridge({ url, token }) {
 
   });
 }
+

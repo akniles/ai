@@ -26,6 +26,6 @@ Deploy a reviewed worker image with a pinned supervisor configuration. The Git t
 
 ## Owner admin
 
-The VPS serves the three admin-web assets separately at /admin. Pair this browser with a fresh code approved by Dora. The owner-only API changes pause state and saves model aliases and generation delay. Terra and Luna are resolved through the existing subscription. Settings apply on the next run; the delay is measured between the end of one model call and dispatch of the next, including calls to the observer. The production time and request limits still apply.
+The VPS serves the three admin-web assets separately at /admin. Pair this browser with a fresh code approved by Dora. The owner-only API changes pause state and saves model aliases and generation delay. Terra and Luna are the defaults. Both selectors use the authenticated subscription catalogue; the worker sends the selected model ID to OpenAI Responses without substituting another model. Settings apply on the next run; the delay is measured between the end of one model call and dispatch of the next, including calls to the observer. The production time and request limits still apply.
 
 Clear hides public history and memory for every viewer. Private logs and settings are retained.

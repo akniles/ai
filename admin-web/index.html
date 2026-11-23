@@ -28,11 +28,11 @@
         <button id="toggle" type="button">Resume</button>
       </div>
       <div class="settings" id="settings">
-        <label>Agent model <select id="actor"><option value="terra">Terra</option><option value="luna">Luna</option></select></label>
-        <label>Observer model <select id="observer"><option value="terra">Terra</option><option value="luna">Luna</option></select></label>
+        <label>Agent model <select id="actor" required></select></label>
+        <label>Observer model <select id="observer" required></select></label>
         <label>Delay between calls <span class="number"><input id="sleepSeconds" type="number" min="0" max="120" step="1" required inputmode="numeric"> s</span></label>
       </div>
-      <p class="hint">Settings apply on the next resume.</p>
+      <p class="hint">Settings apply on the next resume.</p><p id="catalogue-note" class="hint" hidden></p>
       <div class="cleanup">
         <span>Public history and memory</span>
         <button id="clear" type="button">Clear</button>

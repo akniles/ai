@@ -11,6 +11,38 @@ let snapshot;
 let working = false;
 let pollId = 0;
 let editing = false;
+const modelId = value => typeof value === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(value);
+let catalogueSignature;
+let choicesAvailable = false;
+
+function applyCatalogue(data) {
+  const entries = new Map();
+  for (const model of Array.isArray(data.models) ? data.models : []) {
+    if (modelId(model?.id)) entries.set(model.id, typeof model.label === 'string' && model.label.trim() ? model.label : model.id);
+  }
+  choicesAvailable = entries.size > 0;
+  const hint = byId('catalogue-note');
+  hint.hidden = choicesAvailable;
+  hint.textContent = choicesAvailable ? '' : 'Subscription model list unavailable. Current selections are kept.';
+  for (const id of [data.settings.actor, data.settings.observer]) {
+    if (!entries.has(id)) entries.set(id, id);
+  }
+  const signature = JSON.stringify([...entries]);
+  if (signature === catalogueSignature) return;
+  catalogueSignature = signature;
+  for (const field of fields.slice(0, 2)) {
+    field.replaceChildren(...[...entries].map(([value, label]) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      return option;
+    }));
+  }
+}
+
+function enableSettings(busy) {
+  for (const field of fields) field.disabled = busy || (field.id !== 'sleepSeconds' && !choicesAvailable);
+}
 
 async function request(path, body) {
   const response = await fetch(path, {
@@ -33,8 +65,8 @@ function showLogin() {
 
 function showStatus(data, force = false) {
   if (typeof data?.paused !== 'boolean' || typeof data?.running !== 'boolean' ||
-      !['terra', 'luna'].includes(data.settings?.actor) ||
-      !['terra', 'luna'].includes(data.settings?.observer) ||
+      !modelId(data.settings?.actor) ||
+      !modelId(data.settings?.observer) ||
       !Number.isInteger(data.settings?.sleepSeconds)) throw new Error('Invalid status');
   snapshot = data;
   access.hidden = true;
@@ -51,8 +83,11 @@ function showStatus(data, force = false) {
   const canPause = !data.paused;
   toggle.dataset.action = canPause ? 'pause' : 'resume';
   toggle.textContent = canPause ? 'Pause' : 'Resume';
-  if (force || (!editing && !fields.includes(document.activeElement)))
+  if (force || (!editing && !fields.includes(document.activeElement))) {
+    applyCatalogue(data);
     for (const field of fields) field.value = data.settings[field.id];
+    enableSettings(working);
+  }
 }
 
 async function refresh() {
@@ -80,7 +115,7 @@ async function act(action, errorMessage) {
   working = true;
   pollId++;
   toggle.disabled = pair.disabled = claim.disabled = clear.disabled = true;
-  for (const field of fields) field.disabled = true;
+  enableSettings(true);
   notice.textContent = '';
   try {
     await action();
@@ -90,7 +125,7 @@ async function act(action, errorMessage) {
   } finally {
     working = false;
     toggle.disabled = pair.disabled = claim.disabled = clear.disabled = false;
-    for (const field of fields) field.disabled = false;
+    enableSettings(false);
   }
 }
 

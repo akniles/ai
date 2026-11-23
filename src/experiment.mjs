@@ -24,8 +24,8 @@ const maxRequests = viewing ? 20 : 2;
 const deadlineMs = 600_000;
 const spacingMs = Number(process.env.PI_LLM_SLEEP_MS ?? (viewing ? 20_000 : 0));
 const modelsByAlias = new Map([['terra', 'gpt-6.1-terra'], ['luna', 'gpt-6-luna']]);
-const configuredSlug = value => modelsByAlias.get(value) ??
-  ([...modelsByAlias.values()].includes(value) ? value : null);
+const configuredSlug = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value)
+  ? modelsByAlias.get(value) ?? value : null;
 const sessionAbort = new AbortController();
 let launches = 0;
 let nextDispatchAt = 0;
@@ -134,10 +134,23 @@ try {
   if (!res.ok) throw new Error('Existing session was not accepted');
   const models = createModels();
   models.setProvider(openaiProvider());
-  const allowed = (await res.json()).models.filter(x => x.visibility === 'list');
+  const { models: listedModels } = await res.json();
+  if (!Array.isArray(listedModels)) throw new Error('Unexpected subscription model catalogue');
+  const allowed = new Set(listedModels.filter(x => x?.visibility === 'list' && typeof x.slug === 'string').map(x => x.slug));
   const eligible = id => {
-    const candidate = allowed.some(x => x.slug === id) && models.getModel('openai', id);
-    return candidate && hasApi(candidate, 'openai-responses') ? { ...candidate, baseUrl: base } : null;
+    if (!id || !allowed.has(id)) return null;
+    const known = models.getModel('openai', id);
+    if (known && (known.type === undefined || known.type === 'chat') &&
+        known.input?.includes('text') && hasApi(known, 'openai-responses')) {
+      return { ...known, baseUrl: base };
+    }
+    // The account may list more IDs than this version of Pi's built-in catalogue.
+    // Send the exact entitled ID to the same text Responses API; the provider decides support.
+    return {
+      id, name: id, provider: 'openai', api: 'openai-responses', baseUrl: base,
+      input: ['text'], reasoning: false, contextWindow: 16_384, maxTokens: 256,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    };
   };
   const runtimeModel = eligible(configuredSlug(process.env.PI_MODEL_ACTOR ?? 'terra'));
   if (!runtimeModel || stopped) throw new Error('No eligible actor model');
@@ -145,7 +158,51 @@ try {
   if (!narratorModel) throw new Error('No eligible observer model');
   const [system, observerPrompt] = await Promise.all(['pi-system', 'observer-system'].map(loadPrompt));
   const simulation = createSimulation();
+  const secrets = [accessToken, runtimeToken, langfusePublicKey, langfuseSecretKey];
+  const publicField = (value, limit) => {
+    if (typeof value !== 'string' || /[\u0000-\u001f\u007f<>]/u.test(value))
+      throw new Error('Use short plain-text fields');
+    const text = value.trim();
+    if (!text || text.length > limit || secrets.some(secret => secret && text.includes(secret)))
+      throw new Error('Use short public fields without credentials');
+    return text;
+  };
+  const parseGoal = value => {
+    if (!value) return null;
+    return { goal: publicField(value.goal, 160), reason: publicField(value.reason, 240), updated: value.updated };
+  };
+  let workingGoal = parseGoal(initial?.workingGoal);
   let marketActed = false;
+  let goalActed = false;
+  const goalTool = {
+    name: 'set_working_goal', label: 'Set a public working goal',
+    description: 'Replace the working goal for the fictional market, not the owner objective. Give one short observable reason from the public dashboard. Do not include private data or hidden reasoning.',
+    parameters: { type: 'object', properties: {
+      goal: { type: 'string', minLength: 1, maxLength: 160 },
+      reason: { type: 'string', minLength: 1, maxLength: 240 },
+    }, required: ['goal', 'reason'], additionalProperties: false },
+    execute: async (_id, input) => {
+      sessionAbort.signal.throwIfAborted();
+      try {
+        const goal = publicField(input?.goal, 160);
+        const reason = publicField(input?.reason, 240);
+        if (workingGoal?.goal === goal && workingGoal?.reason === reason)
+          return { content: [{ type: 'text', text: 'Working goal unchanged.' }], details: { changed: false }, terminate: true };
+        if (goalActed) throw new Error('One working-goal update per actor turn');
+        goalActed = true;
+        const saved = bridge ? await bridge.setWorkingGoal({ goal, reason }) : { workingGoal: { goal, reason, updated: new Date().toISOString() }, changed: true };
+        const next = parseGoal(saved?.workingGoal);
+        if (!next || typeof saved.changed !== 'boolean') throw new Error('Goal save was not confirmed');
+        const changed = saved.changed;
+        workingGoal = next;
+        const summary = changed ? ('Working goal: ' + next.goal + '. Reason: ' + next.reason).slice(0, 240) : 'Working goal unchanged.';
+        return { content: [{ type: 'text', text: summary }], details: { summary, changed }, terminate: true };
+      } catch {
+        return { content: [{ type: 'text', text: 'Working goal rejected or not confirmed.' }],
+          details: { summary: 'Working goal rejected or not confirmed.' }, isError: true, terminate: true };
+      }
+    },
+  };
   const commandTool = {
     name: 'market_step', label: 'Operate the simulated routing service',
     description: 'Observe the market, publish an offer, or advance one period to measure adoption.',
@@ -153,7 +210,7 @@ try {
     execute: async (_id, { request }) => {
       sessionAbort.signal.throwIfAborted();
       try {
-        if (marketActed) throw new Error('One market move per turn');
+        if (marketActed) throw new Error('One market move per actor turn');
         marketActed = true;
         const { summary, data } = simulation.execute(request);
         return { content: [{ type: 'text', text: JSON.stringify(data) }], details: { summary }, terminate: true };
@@ -164,7 +221,6 @@ try {
     },
   };
   if (stopped) throw new Error('Stopped');
-  const secrets = [accessToken, runtimeToken, langfusePublicKey, langfuseSecretKey];
   const countedStream = async (m, context, options) => {
     const signal = AbortSignal.any([sessionAbort.signal, options?.signal].filter(Boolean));
     signal.throwIfAborted();
@@ -237,6 +293,7 @@ try {
   }
   const makeAgent = () => {
     const next = new Agent({
+      toolExecution: "sequential",
       initialState: {
         model: runtimeModel, thinkingLevel: 'minimal', tools: [],
         systemPrompt: system.text,
@@ -254,11 +311,12 @@ try {
         const { started = stamp(), args } = tools.get(event.toolCallId) ?? {};
         tools.delete(event.toolCallId);
         telemetry.tool(active.scope, event, started, args);
-        if (event.toolName === 'market_step') {
+        if (event.toolName === 'market_step' || (event.toolName === 'set_working_goal' &&
+            (event.isError || event.result?.details?.changed === true))) {
           const summary = event.result?.details?.summary ?? 'Market move rejected.';
           const added = observer.append({ id: cursor + 1, source: 'public-tool', name: event.toolName,
             status: event.isError ? 'error' : 'ok', summary });
-          if (added === 'accepted') evidenceScopes.set(++cursor, active.scope);
+          if (added === 'accepted') evidenceScopes.set(++cursor, { ...active.scope, goal: workingGoal?.goal ?? active.scope.goal });
           else if (added === 'full') stop();
         }
       }
@@ -283,17 +341,20 @@ try {
     if (launches >= maxRequests - 1) break;
     const context = bridge ? await bridge.context() : null;
     if (bridge && !context) { stop(); break; }
+    if (bridge) workingGoal = parseGoal(context.workingGoal);
     const prompt = await loadPrompt('pi-goal');
-    const input = prompt.text + '\nMarket dashboard: ' + JSON.stringify(simulation.observe());
+    const input = prompt.text + '\nWorking goal (set via set_working_goal, separate from the owner objective): ' +
+      JSON.stringify(workingGoal && { goal: workingGoal.goal, reason: workingGoal.reason }) + '\nMarket dashboard: ' + JSON.stringify(simulation.observe());
     if (viewing) agent = makeAgent();
-    agent.state.tools = [commandTool];
+    agent.state.tools = [commandTool, goalTool];
     const startTimeUnixNano = stamp();
     const turnTraceId = viewing ? randomBytes(16).toString('hex') : traceId;
     const turnParentSpanId = viewing ? spanId() : parentSpanId;
     active.scope = { traceId: turnTraceId, parentSpanId: turnParentSpanId,
-      name: 'Pi simulation · generation', prompt, secrets, goal: 'Fictional network' };
+      name: 'Pi simulation · generation', prompt, secrets, goal: workingGoal?.goal ?? 'Fictional network' };
     const beforeTools = cursor;
     marketActed = false;
+    goalActed = false;
     try { await agent.prompt(input); } catch { /* The trace below marks a turn without evidence failed. */ }
     await telemetry.flush();
     if (viewing) spans.push(agentSpan({
@@ -317,4 +378,5 @@ clearInterval(pausePoll);
 clearTimeout(endTimer);
 try { await publish(status); } catch { console.error('Could not publish stopped status.'); process.exitCode = 1; }
 try { if (launches) { await telemetry?.flush(); await exportTrace(true); console.log((viewing ? 'Langfuse session: ' : 'Langfuse trace: ') + traceId); } } catch { console.error('Langfuse trace delivery failed.'); process.exitCode = 1; }
+
 
