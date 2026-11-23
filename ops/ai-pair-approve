@@ -1,0 +1,35 @@
+#!/bin/sh
+# Approve one owner-browser challenge using the local, already-authorized control service.
+set -eu
+if [ "$#" -ne 0 ]; then
+  printf '%s\n' 'Usage: ai-pair-approve < pairing-code' >&2
+  exit 64
+fi
+exec /usr/bin/docker --host unix:///var/run/docker.sock exec -i ai-control-1 \
+  node --input-type=module -e '
+const die = (code, message) => { console.error(message); process.exit(code); };
+let bytes = 0, parts = [];
+for await (const chunk of process.stdin) {
+  bytes += chunk.length;
+  if (bytes > 14) die(64, "Invalid pairing code: expected 12 lowercase hexadecimal characters.");
+  parts.push(chunk);
+}
+const input = Buffer.concat(parts).toString("ascii");
+const code = input.replace(/\r?\n$/, "");
+if (Buffer.concat(parts).some(byte => byte > 127) || !/^[0-9a-f]{12}$/.test(code))
+  die(64, "Invalid pairing code: expected 12 lowercase hexadecimal characters.");
+const token = process.env.OWNER_TOKEN;
+if (!token) die(69, "Pairing unavailable: owner credential is not configured.");
+try {
+  const response = await fetch("http://127.0.0.1:8787/owner/pair/approve", {
+    method: "POST", headers: {authorization: "Bearer " + token, "content-type": "application/json"},
+    body: JSON.stringify({code}), redirect: "error", signal: AbortSignal.timeout(5000),
+  });
+  if (response.status === 404 || response.status === 410) die(65, "Pairing code is unknown or expired.");
+  if (!response.ok) die(69, "Pairing rejected (HTTP " + response.status + ").");
+  if ((await response.json()).approved !== true) die(69, "Pairing approval was not confirmed.");
+  console.log("Pairing approved. Finish pairing in the same browser tab.");
+} catch {
+  die(69, "Pairing could not be verified; no retry was made.");
+}
+'
